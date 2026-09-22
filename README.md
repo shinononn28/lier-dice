@@ -14,7 +14,7 @@
 | `build.js` | 上の3つとエンジンから `public/index.html` と `standalone.html` を作る |
 | `standalone.html` | CPU戦だけ遊べる1ファイル版（サーバー不要） |
 
-画面を直したら `npm run build` を実行して `public/index.html` を作り直してください。
+`public/index.html` と `standalone.html` は `npm install` のときに自動で作り直されます（`postinstall`）。手元で画面を直して確認するときは `npm run build` を実行してください。
 
 ## 手元で動かす
 
@@ -38,7 +38,11 @@ npm start
    - Instance Type: Free で可
 4. デプロイが終わると `https://〇〇.onrender.com` のURLが発行される。そこを開いて「ルームを作る」→招待リンクを共有。
 
+GitHubに変更をpushすると、Renderが自動で再ビルド・再デプロイします（Auto-Deploy が既定でオン）。
+ビルド時に `npm install` が走るので、`client.js` などを直しただけでも画面に反映されます。
+
 注意点：
+- 再デプロイの瞬間にサーバーが入れ替わるので、遊んでいる最中にpushすると進行中のゲームは消えます。
 - 無料プランは15分ほどアクセスがないと眠り、次のアクセスで起動に30秒〜1分かかります。遊ぶ前に一度開いておくと安心です。
 - ルームはサーバーのメモリにだけ保存しています。サーバーが再起動すると進行中のゲームは消えます。
 - Railway や Fly.io でも同じ手順（`npm install` → `npm start`、ポートは環境変数 `PORT`）で動きます。

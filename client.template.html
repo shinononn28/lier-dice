@@ -52,6 +52,30 @@
 @keyframes popin{from{opacity:0}}
 @keyframes popc{from{transform:scale(.85) rotate(-2deg);opacity:0}}
 @media (prefers-reduced-motion:reduce){.pop,.popc{animation:none}}
+.flip .fa{-webkit-transform:rotateY(0deg);transform:rotateY(0deg)}
+.flip .fi{-webkit-transform-style:preserve-3d}
+.dzp .row button.small{min-height:32px;font-size:13px;padding:2px 12px}
+.vdict{position:fixed;inset:0;z-index:66;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.45);animation:popin .2s ease-out both}
+.vdict.out{opacity:0;transition:opacity .18s}
+.vdc{background:var(--panel);border:3px solid var(--ink);border-radius:18px;padding:18px 20px;min-width:260px;max-width:380px;text-align:center;box-shadow:0 12px 36px rgba(0,0,0,.35)}
+.vdc.win{border-color:var(--brass)}.vdc.lose{border-color:var(--red)}
+.vtop{font-weight:700;font-size:16px;margin-bottom:2px}
+.vdc.win .vtop{color:var(--brass)}.vdc.lose .vtop{color:var(--red)}
+.vstamp{font-size:40px;line-height:1.15;margin:4px 0 8px;animation:stamp .45s cubic-bezier(.2,1.7,.4,1) both}
+.vstamp.t{color:var(--blue)}.vstamp.l{color:var(--red)}
+@keyframes stamp{from{transform:scale(2.2) rotate(-8deg);opacity:0}to{transform:none;opacity:1}}
+.vline{font-size:15px}
+.vstamp.fin{font-size:52px}.vstamp.win{color:var(--brass)}.vstamp.lose{color:var(--red)}.vstamp.draw{color:var(--ink)}
+.vcoins{display:flex;align-items:baseline;justify-content:center;gap:10px;margin-top:6px;font-size:15px}
+.vcoins b{font-size:30px;color:var(--brass)}
+.vnote{margin-top:6px;font-size:13.5px;font-weight:700;color:var(--brass)}
+.vhint{margin-top:10px}
+@media (prefers-reduced-motion:reduce){
+  .flip .fi,.flip.up .fi{transition:none;transform:none!important}
+  .flip .fa,.flip .fb{-webkit-backface-visibility:visible;backface-visibility:visible;transform:none!important;transition:opacity .25s}
+  .flip .fb{opacity:0}.flip.up .fb{opacity:1}.flip.up .fa{opacity:0}
+  .vstamp{animation:popin .3s ease-out both}
+}
 .mtrow{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
 </style>
 </head>

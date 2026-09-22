@@ -83,7 +83,7 @@ function render(){
   $('#round').textContent=S.over?'終了':S.round?`R${S.round} / ${S.rounds}`:'';
   $('#seats').innerHTML=S.order.map(seatHTML).join('');
   const bd=$('#board'),hi=$('#hist'),rv=S.lastReveal;
-  const mult=(S.mult>1?`<span class="mult">賭け金×${S.mult}</span>`:'');
+  const mult=(S.mult>1&&!S.over&&S.phase!=='accuse'?`<span class="mult">賭け金×${S.mult}</span>`:'');
   if(rv){bd.innerHTML=`<div class="bidnum disp">${rv.actual}<small>個</small></div>${dieHTML(rv.f,'big')}
       <div class="bidby">${esc(rv.by)}の「${rv.c}個の${rv.f}」は<b>${rv.truth?'本当':'嘘'}</b><br>${esc(rv.payer)}が${rv.amount}枚払った</div>`;
     hi.innerHTML=lastDoubt?`<div class="rvt">${lastDoubt.rows.map(r=>`<div class="r"><b>${esc(r.name)}</b>${r.dice.map(d=>dieHTML(d,d===rv.f?'hit':'dim')).join('')}</div>`).join('')}</div>`:''}
@@ -239,7 +239,6 @@ function openAccuse(pr){
 const rawSleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function doubtShow(d){
   lastDoubt=d;const sp=d.speed||1,sl=ms=>rawSleep(ms*sp);
-  const reduce=!!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const w=document.createElement('div');w.className='dz';
   w.innerHTML=`<div class="dzp" role="dialog" aria-modal="true" aria-label="ダウト">
     <div class="dzt disp">ダウト！</div>
@@ -247,32 +246,51 @@ async function doubtShow(d){
     <div class="dzm disp" hidden>${d.matta?`${esc(d.matta.name)}の待った！`:''}</div>
     <div class="dzcnt">${dieHTML(d.f,'mid')}<span class="disp n">0</span><span class="u">個 ／ 宣言${d.c}個</span></div>
     <div class="dzrows">${d.rows.map(r=>`<div class="dzr"><b>${esc(r.name)}</b>${r.dice.map((x,i)=>`<span class="flip ${r.changed.includes(i)?'chg':''}" data-d="${x}"><span class="fi"><span class="fa">${dieHTML(0)}</span><span class="fb">${dieHTML(x)}</span></span></span>`).join('')}</div>`).join('')}</div>
-    <div class="dzv" aria-live="polite"></div>
-    <div class="row end dzb" hidden><button class="primary" data-x="close">閉じる</button></div></div>`;
+    <div class="row end"><button data-x="skip" class="small">スキップ</button></div></div>`;
   document.body.appendChild(w);
-  let closed=false;const close=()=>{if(closed)return;closed=true;w.remove();render()};
-  w.addEventListener('click',e=>{if(e.target.closest('[data-x=close]'))close()});
-  await sl(reduce?150:1000);
-  if(d.matta){w.querySelector('.dzm').hidden=false;await sl(reduce?100:1200)}
+  let skip=false;w.addEventListener('click',e=>{if(e.target.closest('[data-x=skip]'))skip=true});
+  const wait=ms=>skip?Promise.resolve():sl(ms);
+  await wait(1000);
+  if(d.matta){w.querySelector('.dzm').hidden=false;await wait(1200)}
   let n=0;const nEl=w.querySelector('.n'),cnt=w.querySelector('.dzcnt');
-  for(const row of w.querySelectorAll('.dzr')){for(const fl of row.querySelectorAll('.flip')){if(closed)return;
+  for(const row of w.querySelectorAll('.dzr')){for(const fl of row.querySelectorAll('.flip')){
     fl.classList.add('up');
     if(+fl.dataset.d===d.f){n++;fl.classList.add('hit');nEl.textContent=n;cnt.classList.remove('bump');void cnt.offsetWidth;cnt.classList.add('bump');if(n>=d.c)cnt.classList.add('ok')}
     else fl.classList.add('miss');
-    if(!reduce)await sl(150)}
-    if(!reduce)await sl(220)}
-  await sl(reduce?100:600);if(closed)return;
-  w.querySelector('.dzv').innerHTML=`<div class="dzvt disp ${d.truth?'t':'l'}">${d.truth?'宣言は本当':'宣言は嘘'}</div>
-    <div>${esc(d.loser)}の負け${d.sg?`<br><b>身代わり発動！</b> ${esc(d.payer)}が代わりに払う`:''} ・ 金貨${d.amount}枚</div>${d.bonus?`<div class="bonusl">看破ボーナス！ 宣言より${d.c-n}個も少ない。さらに${d.bonus}枚奪取（計${d.amount+d.bonus}枚）</div>`:''}`;
-  w.querySelector('.dzb').hidden=false;
-  await sl(2600);close();
+    await wait(150)}
+    await wait(220)}
+  w.querySelector('.dzp .row').remove();
+  await sl(skip?300:700);
+  await verdictShow(d,sp);
+  w.remove();render();
 }
+function verdictShow(d,sp){return new Promise(res=>{
+  const me=S&&S.you,ids=d.ids||{};
+  let top='',cls='';
+  if(me===ids.winner){top='あなたの勝ち！';cls='win'}
+  else if(me===ids.payer&&d.sg){top='身代わりで払わされた…';cls='lose'}
+  else if(me===ids.loser){top=d.sg?'負けたが、支払いは身代わりへ':'あなたの負け…';cls=d.sg?'':'lose'}
+  const total=d.amount+(d.bonus||0);
+  const v=document.createElement('div');v.className='vdict';
+  v.innerHTML=`<div class="vdc ${cls}" role="dialog" aria-live="assertive">
+    ${top?`<div class="vtop">${top}</div>`:''}
+    <div class="vstamp disp ${d.truth?'t':'l'}">${d.truth?'宣言は本当':'嘘を見破った'}</div>
+    <div class="vline">「${d.f}」は${d.actual}個 ／ 宣言は${d.c}個</div>
+    <div class="vline"><b>${esc(d.loser)}</b>の負け</div>
+    <div class="vcoins">${esc(d.payer)} → ${esc(d.winner)}<b class="disp">${total}枚</b></div>
+    ${d.sg?`<div class="vnote">身代わり発動！ ${esc(d.loser)}の支払いを${esc(d.payer)}がかぶった</div>`:''}
+    ${d.bonus?`<div class="vnote">看破ボーナス：宣言より${d.c-d.actual}個少ない。+${d.bonus}枚込み</div>`:''}
+    <div class="vhint small muted">タップで閉じる</div></div>`;
+  document.body.appendChild(v);
+  let done=false;const close=()=>{if(done)return;done=true;v.classList.add('out');setTimeout(()=>{v.remove();res()},180)};
+  v.addEventListener('click',close);setTimeout(close,3800*sp);
+})}
 
 /* ---------- card popups ---------- */
 const popQ=[];let popBusy=false;
 function queuePopup(d){popQ.push(d);runPop()}
 async function runPop(){if(popBusy)return;popBusy=true;
-  while(popQ.length){while(document.querySelector('.dz'))await rawSleep(200);await showPop(popQ.shift())}popBusy=false}
+  while(popQ.length){while(document.querySelector('.dz,.vdict'))await rawSleep(200);await showPop(popQ.shift())}popBusy=false}
 const colorize=t=>esc(t).replace(/【赤】/g,'<span class="tag red">赤</span>').replace(/【青】/g,'<span class="tag blue">青</span>').replace(/【詐欺師】/g,'<span class="tag rogue">詐欺師</span>');
 function showPop(d){return new Promise(res=>{
   const w=document.createElement('div');w.className='pop'+(d.private?' priv':'');
@@ -286,6 +304,21 @@ function showPop(d){return new Promise(res=>{
 })}
 
 /* ---------- result ---------- */
+async function showFinal(){
+  while(document.querySelector('.dz,.vdict,.pop'))await rawSleep(200);
+  const r=S.result;if(!r)return;const me=r.rows.find(x=>x.id===S.you);
+  const st=r.winner==='draw'?'draw':r.winner===me.team?'win':'lose';
+  const v=document.createElement('div');v.className='vdict';
+  v.innerHTML=`<div class="vdc ${st==='draw'?'':st}" role="dialog" aria-live="assertive">
+    <div class="vtop">${esc(r.head)}</div>
+    <div class="vstamp disp fin ${st}">${st==='win'?'勝利！':st==='lose'?'敗北…':'引き分け'}</div>
+    <div class="vline">あなたは<span class="tag ${me.team}">${TEAM[me.team]}</span>${me.origTeam!==me.team?`（元は${TEAM[me.origTeam]}）`:''} ・ 金貨${me.coins}枚</div>
+    <div class="vline small">赤 ${r.red}枚 ／ 青 ${r.blue}枚${r.rogue?` ／ 詐欺師${esc(r.rogue.name)} ${r.rogue.coins}枚${r.rogue.exposed?'（吊られた）':''}`:''}</div>
+    <div class="row" style="justify-content:center"><button class="primary" data-x="detail">結果の詳細</button></div></div>`;
+  document.body.appendChild(v);
+  v.addEventListener('click',e=>{if(e.target===v||e.target.closest('[data-x=detail]')){v.remove();showResult()}});
+  setTimeout(()=>{const b=v.querySelector('button');b&&b.focus({preventScroll:true})},30);
+}
 function showResult(){
   const r=S.result;if(!r)return;resultShown=true;
   const me=r.rows.find(x=>x.id===S.you),win=r.winner==='draw'?null:r.winner===me.team;
@@ -302,7 +335,7 @@ function showResult(){
 
 /* ---------- event handling ---------- */
 function onEvent(type,data){
-  if(type==='state'){S=data;render();renderCardTab();handlePrompt();drawMitsudan();if(S.over&&!resultShown)setTimeout(showResult,600)}
+  if(type==='state'){S=data;render();renderCardTab();handlePrompt();drawMitsudan();if(S.over&&!resultShown){resultShown=true;setTimeout(showFinal,600)}}
   else if(type==='log')addLog(data);
   else if(type==='logs'){clearLogs();data.forEach(addLog)}
   else if(type==='doubt')doubtShow(data);

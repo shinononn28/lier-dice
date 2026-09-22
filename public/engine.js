@@ -324,7 +324,7 @@ function createGame(opts){
     if(loser.scapegoat){const idx=G.order.indexOf(loser);
       for(let k=1;k<G.order.length;k++){const q=G.order[(idx+k)%G.order.length];if(q!==winner&&q!==loser){payer=q;break}}
       if(payer!==loser){sg={from:loser.name,to:payer.name};loser.revealed.push('身代わり');G.effects.push({round:G.round,text:`身代わり発動：${loser.name}の支払いを${payer.name}がかぶった`})}}
-    emit('*','doubt',{ch:ch.name,by:b.name,c,f,mult:G.mult,truth,bonus,loser:loser.name,payer:payer.name,winner:winner.name,amount,matta,sg,speed,
+    emit('*','doubt',{ch:ch.name,by:b.name,c,f,mult:G.mult,truth,bonus,actual,loser:loser.name,payer:payer.name,winner:winner.name,ids:{ch:ch.id,by:b.id,loser:loser.id,payer:payer.id,winner:winner.id},amount,matta,sg,speed,
       rows:G.order.map(p=>({name:p.name,dice:[...p.dice],changed:matta&&p===b?matta.changed:[]}))});
     const nd=G.players.length*5;
     await sleep(1000+(matta?1200:0)+150*nd+220*G.players.length+700+2600);
