@@ -272,6 +272,15 @@ input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--lin
 .pdot{position:absolute;top:-3px;right:-3px;width:12px;height:12px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px var(--bg)}
 .pdot[hidden]{display:none}
 .sheet-wrap[hidden]{display:none}
+.sheet.wide{max-width:640px}
+.rvbody{margin-top:10px;display:grid;gap:10px}
+.rvg h4{margin:0 0 4px;font-size:14px;border-bottom:1px solid var(--line);padding-bottom:2px}
+.rvl{font-size:13.5px;line-height:1.55;padding:2px 0}
+.rvl.k-doubt{font-weight:700}
+.rvl.k-start,.rvl.k-hand{color:var(--muted)}
+.rvl b.ok{color:var(--blue);font-size:12px}.rvl b.ng{color:var(--red);font-size:12px}
+.tmgrid{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center}
+.tmgrid .seg button{min-height:34px;padding:2px 10px;font-size:13px}
 .mtrow{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
 </style>
 </head>
@@ -374,13 +383,13 @@ function minRaise(){const T=S.totalDice,cnt=[0,0,0,0,0,0,0];S.me.dice.forEach(d=
   const fs=[1,2,3,4,5,6].filter(f=>maxOf(f)<T).sort((a,b)=>cnt[b]-cnt[a]);const f=fs[0]||6;return{c:Math.min(T,maxOf(f)+1),f}}
 const myTurn=()=>S&&S.prompt&&S.prompt.kind==='turn';
 function cardReady(c){const d=CARDS[c.type];return!c.used&&!c.reserved&&!d.reaction&&!(d.late&&!S.mitsudanDone)&&!(d.biddingOnly&&S.phase!=='bidding')}
-const canUseCards=()=>S&&(S.phase==='prep'||S.phase==='bidding')&&!S.lastReveal&&!S.me.usedThisRound&&S.me.cardsUsed<2&&sheetOpen===0;
+const canUseCards=()=>S&&(S.phase==='prep'||S.phase==='bidding')&&!S.lastReveal&&!S.me.usedThisRound&&S.me.cardsUsed<S.rule.use&&sheetOpen===0;
 
 /* ---------- render ---------- */
 const MARK={red:'赤?',blue:'青?',both:'赤青?'};
 function seatHTML(p){
   const tag=p.team?`<span class="tag ${p.team}">${TEAM[p.team]}</span>`:'';
-  const pips=p.cardsUsed===null?'<span class="hid" title="前半は非公開"></span>':[0,1].map(i=>`<span class="${i<p.cardsUsed?'on':''}"></span>`).join('');
+  const pips=p.cardsUsed===null?'<span class="hid" title="前半は非公開"></span>':Array.from({length:S.rule.use},(_,i)=>`<span class="${i<p.cardsUsed?'on':''}"></span>`).join('');
   const isMe=p.id===S.you,mk=marks[p.id];
   const mark=isMe?'':`<span class="mark ${mk||'none'}" aria-hidden="true">${mk?MARK[mk]:'?'}</span>`;
   const el=isMe?'div':'button';
@@ -408,7 +417,7 @@ function render(){
   if(turn&&!isValid(sel.c,sel.f))sel=minRaise();
   const own=me.dice.filter(d=>d===sel.f).length,pr=S.prompt;
   let ctrl;
-  if(S.over)ctrl=`<button class="primary" data-act="result">結果を見る</button>`;
+  if(S.over)ctrl=`<div class="line"><button class="primary" style="flex:1" data-act="result">結果を見る</button><button style="flex:1" data-act="review">感想戦</button></div>`;
   else if(pr&&pr.kind==='ready'){const rd=S.ready;ctrl=`<div class="info">ラウンド${S.round}の準備中。${me.usedThisRound?'カードを予約した。宣言開始と同時に発動する。':'今使うカードは全員同時に発動する（濡れ衣が最優先）。'}<span class="cd">${cdText()}</span></div>
       <button class="primary" data-act="ready">${rd&&rd.of>1?`準備完了（${rd.n}/${rd.of}）`:'宣言を始める'}</button>`}
   else if(S.phase==='prep'){const rd=S.ready;ctrl=`<div class="info">ほかの人の準備を待っています${rd?`（${rd.n}/${rd.of}）`:''}</div><button class="primary" disabled>待機中</button>`}
@@ -427,7 +436,7 @@ function render(){
   $('#mine').innerHTML=`<div class="head"><div class="who">${esc(meP().name)}<span class="tag ${me.team}">${TEAM[me.team]}</span>${me.framed?'<span class="small muted">濡れ衣中</span>':''}${me.scapegoat?'<span class="small muted">身代わり中</span>':''}</div>
     <div class="hand">${me.dice.map(d=>dieHTML(d,'mid')).join('')}</div></div>${ctrl}
     ${pk&&!S.over?`<div class="info peekl">のぞき中：${esc(pk.name)} ${pk.dice.map(d=>dieHTML(d)).join('')}<span>ラウンド${pk.until}まで</span></div>`:''}
-    <div class="cards" aria-label="カード（あと${2-me.cardsUsed}枚使える）">${cards}</div>`;
+    <div class="cards" style="grid-template-columns:repeat(${me.cards.length},minmax(0,1fr))" aria-label="カード（あと${S.rule.use-me.cardsUsed}枚使える）">${cards}</div>`;
 }
 
 function renderCardTab(){
@@ -460,6 +469,7 @@ document.addEventListener('click',e=>{
   else if(a==='ready'&&S.prompt&&S.prompt.kind==='ready'){net.send('respond',{kind:'ready',value:true})}
   else if(a==='card')useCard(+b.dataset.i);
   else if(a==='result')showResult();
+  else if(a==='review')showReview();
   else if(a==='reopen'&&S.prompt){if(promptSheet&&promptSheet.w&&promptSheet.w._min)restoreSheet(promptSheet.w);else if(!promptSheet||!promptSheet.w||!promptSheet.w.isConnected){opened.delete(S.prompt.id);handlePrompt()}}
 });
 async function useCard(i){
@@ -646,9 +656,34 @@ function showResult(){
   const w=openSheet(`<p class="muted small">結果</p><div class="win disp">${esc(r.head)}</div>
     <p>${win===null?'決着つかず。':win?'あなたの勝ち。':'あなたの負け。'} 赤 ${r.red}枚 ／ 青 ${r.blue}枚${r.rogue?` ／ 詐欺師 ${r.rogue.coins}枚（名指し ${r.rogue.votes}票${r.rogue.exposed?'・吊られた':''}）`:''}</p>
     <table class="res"><thead><tr><th>席</th><th>金貨</th><th>告発正解</th><th>カード（太字＝使用）</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="row end"><button data-x="close">卓を見る</button>${again}</div>`);
+    <div class="row end"><button data-x="close">卓を見る</button><button data-x="review">感想戦</button>${again}</div>`);
   w.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;closeSheet(w);
-    if(b.dataset.x==='again')showHome();if(b.dataset.x==='rematch'&&socket)socket.emit('rematch')});
+    if(b.dataset.x==='again')showHome();if(b.dataset.x==='rematch'&&socket)socket.emit('rematch');if(b.dataset.x==='review')showReview()});
+}
+
+/* ---------- 感想戦 ---------- */
+function showReview(tab='time'){
+  const R=S.review;if(!R)return;
+  const ev=R.events,claims=ev.filter(e=>e.cat==='claim');
+  const icon={card:'🂠',doubt:'⚖',claim:'💬',start:'🎭',hand:'🃏'};
+  const line=e=>`<div class="rvl k-${e.cat}">${icon[e.cat]||''} <span>${esc(e.text)}</span>${e.cat==='claim'?` <b class="${e.truth?'ok':'ng'}">${e.truth?'本当':`ウソ（実際は${esc(e.real)}）`}</b>`:''}</div>`;
+  let body='';
+  if(tab==='time'){
+    const groups={};ev.forEach(e=>{const k=e.round===0?'開始時':e.phase==='mitsudan'||e.phase==='between'?`ラウンド${e.round}のあと（密談）`:`ラウンド${e.round}`;(groups[k]=groups[k]||[]).push(e)});
+    body=Object.entries(groups).map(([k,a])=>{const rn=+(k.match(/ラウンド(\d+)$/)||[])[1];
+      return `<div class="rvg"><h4>${esc(k)}${rn&&R.parents&&R.parents[rn]?`<span class="muted small">　親：${esc(R.parents[rn])}</span>`:''}</h4>${a.map(line).join('')}</div>`}).join('');
+  }else if(tab==='claims'){
+    const byWho={};claims.forEach(e=>{const w=e.text.split('「')[0];(byWho[w]=byWho[w]||[]).push(e)});
+    body=claims.length?Object.entries(byWho).map(([w,a])=>`<div class="rvg"><h4>${esc(w)}<span class="muted small">　本当${a.filter(x=>x.truth).length}／ウソ${a.filter(x=>!x.truth).length}</span></h4>${a.map(line).join('')}</div>`).join(''):'<p class="muted">チャットでの陣営の主張はなかった</p>';
+  }else{
+    body=R.threads&&R.threads.length?R.threads.map(th=>`<div class="rvg"><h4>${esc(th.a)} × ${esc(th.b)}</h4>${th.log.map(e=>`<div class="rvl"><b>${esc(e.name)}</b>「${esc(e.text)}」${e.check.map(c=>` <b class="${c.truth?'ok':'ng'}">${c.truth?'本当':`ウソ（実際は${esc(c.real)}）`}</b>`).join('')}</div>`).join('')}</div>`).join(''):'<p class="muted">密談の記録はない</p>';
+  }
+  const w=openSheet(`<h3>感想戦</h3><p class="muted small">ゲーム中は伏せられていたことを全部公開。陣営の真偽は、その発言をした時点の陣営で判定している。</p>
+    <div class="seg" data-g="tab">${[['time','時系列'],['claims','発言の真偽'],['threads','密談']].map(([k,l])=>`<button data-t="${k}" aria-pressed="${tab===k}">${l}</button>`).join('')}</div>
+    <div class="rvbody">${body}</div><div class="row end"><button class="primary" data-x="close">閉じる</button></div>`,'wide');
+  w.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.t){closeSheet(w);showReview(b.dataset.t)}
+    if(b.dataset.x==='close'){closeSheet(w);showResult()}});
 }
 
 /* ---------- event handling ---------- */
@@ -686,6 +721,8 @@ function connect(){
   return socket;
 }
 let lobbyChat=[];
+const TIMER_LABEL={turn:'手番',prep:'ラウンド準備',mitsudan:'密談',accuse:'告発'};
+const fmtSec=x=>x>=60&&x%60===0?`${x/60}分`:`${x}秒`;
 const BOTCHAT_OPTS=[['on','あり'],['low','推理だけ'],['off','なし']];
 function lobbyInfoHTML(){
   const r=room,url=location.origin+location.pathname+'?room='+r.code;
@@ -694,8 +731,9 @@ function lobbyInfoHTML(){
     <p class="small muted" style="margin-top:6px;overflow-wrap:anywhere">${esc(url)}</p>
     <h3 style="margin-top:10px">参加者（${r.members.length}人）</h3><div class="members">${r.members.map(m=>`<div>${esc(m.name)}${m.host?' <span class="tag rogue">ホスト</span>':''}${m.connected?'':' <span class="small muted">切断中</span>'}</div>`).join('')}</div>
     ${r.isHost?`<fieldset><legend>卓の人数（足りない分はCPU）</legend><div class="seg" data-g="n">${[4,5,6].map(n=>`<button data-v="${n}" aria-pressed="${r.n===n}">${n}人</button>`).join('')}</div></fieldset>
-      <fieldset><legend>CPUのチャット</legend><div class="seg" data-g="bc">${BOTCHAT_OPTS.map(([v,l])=>`<button data-v="${v}" aria-pressed="${r.botChat===v}">${l}</button>`).join('')}</div></fieldset>`
-      :`<p class="muted small">ホストの開始を待っています…（卓は${r.n}人・CPUのチャット：${(BOTCHAT_OPTS.find(x=>x[0]===r.botChat)||[0,'なし'])[1]}）</p>`}`;
+      <fieldset><legend>CPUのチャット</legend><div class="seg" data-g="bc">${BOTCHAT_OPTS.map(([v,l])=>`<button data-v="${v}" aria-pressed="${r.botChat===v}">${l}</button>`).join('')}</div></fieldset>
+      <fieldset><legend>制限時間</legend><div class="tmgrid">${Object.keys(TIMER_LABEL).map(k=>`<span class="small">${TIMER_LABEL[k]}</span><div class="seg" data-g="tm" data-k="${k}">${[...r.timerOpts[k]].sort((a,b)=>a-b).map(v=>`<button data-v="${v}" aria-pressed="${r.timers[k]===v}">${fmtSec(v)}</button>`).join('')}</div>`).join('')}</div></fieldset>`
+      :`<p class="muted small">ホストの開始を待っています…（卓は${r.n}人・CPUのチャット：${(BOTCHAT_OPTS.find(x=>x[0]===r.botChat)||[0,'なし'])[1]}）<br>制限時間：${Object.keys(TIMER_LABEL).map(k=>`${TIMER_LABEL[k]}${fmtSec(r.timers[k])}`).join('・')}</p>`}`;
 }
 function drawLobbyChat(){if(!lobbyW)return;const lg=lobbyW.querySelector('.lchat');if(!lg)return;
   lg.innerHTML=lobbyChat.length?lobbyChat.map(m=>m.sys?`<div class="msg sys">${esc(m.text)}</div>`:`<div class="msg chat ${m.key===myKey?'me':''}"><b>${esc(m.name)}</b><span>${esc(m.text)}</span></div>`).join(''):'<div class="msg sys">開始までここで話せます</div>';
@@ -712,7 +750,7 @@ function showLobby(){
   const send=()=>{const t=inp.value.trim();if(!t)return;inp.value='';socket.emit('lchat',t)};
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing)send()});
   lobbyW.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const seg=b.closest('.seg');
-    if(seg){socket.emit('settings',seg.dataset.g==='bc'?{botChat:b.dataset.v}:{n:+b.dataset.v});return}
+    if(seg){socket.emit('settings',seg.dataset.g==='bc'?{botChat:b.dataset.v}:seg.dataset.g==='tm'?{timer:{key:seg.dataset.k,sec:+b.dataset.v}}:{n:+b.dataset.v});return}
     if(b.dataset.x==='lsend')send();
     if(b.dataset.x==='copy'){const u=location.origin+location.pathname+'?room='+room.code;(navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>toast('コピーした'),()=>toast(u))}
     if(b.dataset.x==='start')socket.emit('start');
@@ -733,7 +771,7 @@ function showHome(){
       <div class="seg" data-g="s"><button data-v="1" aria-pressed="true">ふつう</button><button data-v="0.45" aria-pressed="false">速い</button></div>
       <div class="small muted">CPUのチャット</div><div class="seg" data-g="bc">${BOTCHAT_OPTS.map(([v,l])=>`<button data-v="${v}" aria-pressed="${v==='on'}">${l}</button>`).join('')}</div>
       <div class="line2"><button data-x="cpu">CPU戦をはじめる</button></div></div>
-    <p class="muted small">ラウンド数は人数と同じで、全員が1回ずつ親になる。奇数人数だと詐欺師が1人混ざる。</p>
+    <p class="muted small">ラウンド数は人数と同じで、全員が1回ずつ親になる。奇数人数だと詐欺師が1人混ざる。6人卓はカードが4枚配られて3枚まで使える。</p>
     <div class="row end"><button data-x="rules">ルールを読む</button></div>`,'home');
   const getName=()=>{const v=w.querySelector('#h-name').value.trim().slice(0,8)||'名無し';store.set('nimai-name',v);return v};
   w.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const seg=b.closest('.seg');
@@ -753,7 +791,9 @@ function showRules(){
   <li>直前の人の宣言が嘘だと思ったら<b>ダウト</b>。全員のダイスを公開し、その目が宣言以上あれば宣言は本当。</li>
   <li>負けた人は<b>宣言された目と同じ枚数</b>の金貨を勝った人に払う（6なら6枚）。</li>
   <li><b>看破ボーナス</b>：ダウトで嘘を見破ったとき、宣言が実際の個数より3個以上多かったら、嘘をついた側からさらに金貨2枚を奪う。1や2の目で大きく盛った嘘ほど痛い。</li>
-  <li>カードは開始時に3枚。ゲーム中に2枚まで、1ラウンド1枚ずつ使える（待ったはダウトされた瞬間に使う）。</li>
+  <li>カードは開始時に3枚配られ、ゲーム中に2枚まで使える（6人卓は4枚配られて3枚まで）。1ラウンド1枚ずつ（待ったはダウトされた瞬間に使う）。</li>
+  <li>のぞきの効果は4人卓なら2ラウンド、5・6人卓なら3ラウンド続く。</li>
+  <li>4人卓では照合は山札に入らない。</li>
   <li>前半（密談まで）は、カードを使ったこと自体が誰にも通知されない。密談のあとに前半の使用枚数が公開され、後半は使うたびに通知される。</li>
   <li>ラウンド開始前の準備中に使ったカードは、全員同時に発動する。<b>濡れ衣が最優先</b>、<b>陣営交換は最後</b>に処理される。</li>
   <li>折り返しで<b>密談</b>。1人を選んで2人だけで話す（選ばれた側も会話に加わる）。</li>

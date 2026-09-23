@@ -7,7 +7,7 @@ const CARDS={
   compare:{name:'照合',desc:'2人を選び、同じ陣営か見る',n:2},
   frame:{name:'濡れ衣',desc:'以後、自分を調べた人には陣営が逆に見える',n:0},
   wiretap:{name:'盗聴',desc:'1人を選び、その人の密談を読む',n:1},
-  peek:{name:'のぞき',desc:'1人を選び、3ラウンドの間その人のダイスを見続ける',n:1},
+  peek:{name:'のぞき',desc:'1人を選び、数ラウンドの間その人のダイスを見続ける（4人卓は2ラウンド、5・6人卓は3ラウンド）',n:1},
   swap:{name:'陣営交換',desc:'密談後のみ。1人と陣営をまるごと入れ替える（金貨は各自が持ったまま）',n:1,late:true},
   cheat:{name:'イカサマ',desc:'宣言中に使う。自分のダイス1個を好きな目に変える',n:0,die:true,biddingOnly:true},
   scapegoat:{name:'身代わり',desc:'このラウンド、ダウトで負けたら支払いを次の手番の人に押し付ける',n:0},
@@ -38,7 +38,7 @@ function createGame(opts){
   const raw=ms=>new Promise(r=>setTimeout(r,ms));
   const G={players:[],order:[],rounds:0,mid:0,round:0,bid:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,
     phase:'start',revealed:false,lastReveal:null,turn:null,mitsudanDone:false,threads:{},pendingTaps:[],cardQueue:[],
-    pending:{},ready:new Set(),over:false,result:null,effects:[]};
+    pending:{},ready:new Set(),over:false,result:null,effects:[],review:[],allThreads:[]};
   let promptSeq=0,paused=0;
 
   /* ---- players ---- */
@@ -47,13 +47,17 @@ function createGame(opts){
   const ps=opts.humans.map(h=>({id:String(h.id),name:String(h.name).slice(0,10)||'名無し',isBot:false,connected:true}));
   for(let i=ps.length;i<n;i++)ps.push({id:'bot'+i,name:names.shift()||'CPU'+i,isBot:true,connected:true});
   const k=Math.floor(n/2),roles=[];for(let i=0;i<k;i++)roles.push('red','blue');if(n%2)roles.push('rogue');shuffle(roles);
-  const total=3*n;let deck=[];for(const t in WEIGHTS)for(let i=0;i<Math.round(WEIGHTS[t]*total);i++)deck.push(t);
+  // 人数ごとの設定：配るカード枚数・使える枚数・のぞきの持続ラウンド
+  const RULE={4:{deal:3,use:2,peek:2,exclude:['compare']},5:{deal:3,use:2,peek:3},6:{deal:4,use:3,peek:3}}[n]||{deal:3,use:2,peek:3};
+  const DEAL=RULE.deal,USE=RULE.use,PEEK=RULE.peek;
+  // 4人卓の照合は「照合しなかった1人を調査する」のと同じ情報になるので山札から抜く
+  const total=DEAL*n;let deck=[];for(const t in WEIGHTS)if(!(RULE.exclude||[]).includes(t))for(let i=0;i<Math.round(WEIGHTS[t]*total);i++)deck.push(t);
   while(deck.length<total)deck.push('investigate');deck=shuffle(deck).slice(0,total);
   ps.forEach((p,i)=>{Object.assign(p,{team:roles[i],coins:10,dice:[],cardsUsed:0,usedThisRound:false,framed:false,scapegoat:false,peek:null,
-    cards:deck.slice(i*3,i*3+3).map(t=>({type:t,used:false,reserved:false})),ai:{lo:{},susp:{},results:[]},useRounds:[],revealed:[],myLog:[]});
+    cards:deck.slice(i*DEAL,i*DEAL+DEAL).map(t=>({type:t,used:false,reserved:false})),ai:{lo:{},susp:{},results:[]},useRounds:[],revealed:[],myLog:[]});
     p.cover=p.team==='rogue'?rnd(['red','blue']):p.team;p.origTeam=p.team;});
   ps.forEach(p=>ps.forEach(q=>{if(q!==p){p.ai.lo[q.id]=0;p.ai.susp[q.id]=0}}));
-  G.players=ps;G.parents=new Set();G.rounds=n;G.mid=Math.ceil(n/2);
+  G.players=ps;G.parents=new Set();G.rule=RULE;G.rounds=n;G.mid=Math.ceil(n/2);
 
   const byId=id=>G.players.find(p=>p.id===String(id));
   const humans=()=>G.players.filter(p=>!p.isBot);
@@ -67,6 +71,14 @@ function createGame(opts){
   /* ---- output ---- */
   const pub=(kind,html,extra)=>emit('*','log',Object.assign({kind,html},extra||{}));
   const sys=t=>pub('sys',esc(t));
+  // 感想戦用の記録（ゲーム終了まで誰にも見せない）
+  const TT=t=>TEAM[t];
+  const rv=(cat,text,extra)=>G.review.push(Object.assign({round:G.round,phase:G.phase,cat,text},extra||{}));
+  function rvClaim(sp,cl){
+    if(cl.k==='self'){const real=sp.team;rv('claim',`${sp.name}「自分は${cl.red?'赤':'青'}」`,{truth:real!=='rogue'&&(real==='red')===cl.red,real:TT(real)});return}
+    if(cl.k==='target'){const t=byId(cl.t);if(!t)return;rv('claim',`${sp.name}「${t.name}は${cl.red?'赤':'青'}」`,{truth:t.team!=='rogue'&&(t.team==='red')===cl.red,real:TT(t.team)})}
+    if(cl.k==='pair'){const a=byId(cl.a),b=byId(cl.b);const same=a.team===b.team;rv('claim',`${sp.name}「${a.name}と${b.name}は${cl.same?'同じ':'別の'}陣営」`,{truth:same===cl.same,real:`${TT(a.team)}と${TT(b.team)}`})}
+  }
   const pubPopup=(title,lines,except)=>humans().forEach(h=>{if(h!==except)emit(h.id,'popup',{title,lines})});
   const say=(p,t)=>pub('chat',`<b>${esc(p.name)}</b><span>${esc(t)}</span>`,{from:p.id});
   // CPUの発言：kind = claim（推理に関わる主張）/ banter（雑談・リアクション）/ reply（返事）
@@ -140,7 +152,21 @@ function createGame(opts){
   const teamDesc=q=>`【${TEAM[q.team]}】${q.team==='rogue'?`（調べられると${TEAM[q.cover]}に見える。金貨単独1位かつ告発で吊られなければ単独勝利）`:''}`;
   function applyCard(p,ci,targets,extra,silent){
     const lens=new Map(humans().map(h=>[h,h.myLog.length])),name=CARDS[p.cards[ci].type].name;
+    const type=p.cards[ci].type,t0=targets[0],before=t0?{team:t0.team}:null,myBefore=p.team,oldDie=extra?p.dice[extra.i]:null;
     const res=applyCardInner(p,ci,targets,extra,silent);
+    let d='';
+    switch(type){
+      case 'investigate':d=`${t0.name}を調査 → ${res.red?'赤':'青'}に見えた`+((res.red?'red':'blue')!==trueColor(t0)?`（本当は${TT(t0.team)}・濡れ衣で反転）`:t0.team==='rogue'?'（本当は詐欺師）':'');break;
+      case 'compare':{const[a,b]=targets;d=`${a.name}と${b.name}を照合 → ${res.same?'同じ':'別の'}陣営に見えた（本当は${TT(a.team)}と${TT(b.team)}）`;break}
+      case 'frame':d='濡れ衣を仕込んだ';break;
+      case 'wiretap':d=`${t0.name}の密談を盗聴`;break;
+      case 'peek':d=`${t0.name}のダイスをのぞき（ラウンド${p.peek.until}まで）`;break;
+      case 'swap':d=`${t0.name}と陣営交換（自分：${TT(myBefore)}→${TT(p.team)}、${t0.name}：${TT(before.team)}→${TT(t0.team)}）`;break;
+      case 'cheat':d=`イカサマ：ダイスの${oldDie}を${extra.face}に`;break;
+      case 'scapegoat':d='身代わりを仕込んだ';break;
+      case 'double':d=`賭け金倍（×${G.mult}）`;break;
+    }
+    rv('card',`${p.name}：${d}`,{who:p.name,card:CARDS[type].name});
     humans().forEach(h=>{const add=h.myLog.slice(lens.get(h));if(add.length)emit(h.id,'popup',{private:true,title:h===p?`${name}を使った`:'カードの効果を受けた',lines:add.map(x=>x.text)})});
     return res;
   }
@@ -159,8 +185,8 @@ function createGame(opts){
         return{k:'cmp',a,b,same}}
       case 'frame':p.framed=true;note(p,'濡れ衣を仕込んだ');priv(p,'濡れ衣を仕込んだ。これ以降、あなたを調査・照合した人には陣営が逆に見える。');return null;
       case 'wiretap':note(p,`盗聴 → ${t.name}${G.mitsudanDone?'：密談の中身を手帳に記録':'：密談後に中身が届く'}`);if(G.mitsudanDone)deliverTap(p,t);else{G.pendingTaps.push({p:p.id,t:t.id});priv(p,`盗聴：${t.name} の密談に耳を澄ませる。密談のあとに中身が届く。`)}return null;
-      case 'peek':p.peek={id:t.id,until:G.round+2};note(p,`のぞき → ${t.name}：ラウンド${G.round+2}までダイスが見える`);
-        priv(p,`のぞき：${esc(t.name)} のダイス（ラウンド${G.round+2}まで毎回見える）<br>${t.dice.map(d=>dieHTML(d)).join(' ')}`,true);return null;
+      case 'peek':p.peek={id:t.id,until:G.round+PEEK-1};note(p,`のぞき → ${t.name}：ラウンド${G.round+PEEK-1}までダイスが見える`);
+        priv(p,`のぞき：${esc(t.name)} のダイス（ラウンド${G.round+PEEK-1}まで毎回見える）<br>${t.dice.map(d=>dieHTML(d)).join(' ')}`,true);return null;
       case 'swap':{const pt=p.team,pc=p.cover;p.team=t.team;p.cover=t.cover;t.team=pt;t.cover=pc;
         priv(p,`陣営交換：${t.name}と陣営を入れ替えた。あなたは今${teamDesc(p)}`);note(p,`陣営交換 → ${t.name}：あなたは今【${TEAM[p.team]}】`);note(t,`何者かに陣営を入れ替えられた：今は【${TEAM[t.team]}】`);
         if(p.isBot&&p.team!=='rogue')addLO(p,t.id,trueColor(t)==='red'?3:-3);
@@ -172,8 +198,8 @@ function createGame(opts){
     return null;
   }
   function botPlanCard(p){
-    if(p.usedThisRound||p.cardsUsed>=2)return null;
-    const need=2-p.cardsUsed,left=G.rounds-G.round+1;
+    if(p.usedThisRound||p.cardsUsed>=USE)return null;
+    const need=USE-p.cardsUsed,left=G.rounds-G.round+1;
     if(Math.random()>(left<=need?1:need/left*0.85))return null;
     const oth=others(p);
     const pr=q=>q===p?(trueColor(p)==='red'?1:0):sig(p.ai.lo[q.id]);
@@ -200,13 +226,13 @@ function createGame(opts){
   function botAnnounce(p,res){
     if(!res||!botOK('claim')||Math.random()>0.55)return;
     const honest=Math.random()<(p.team==='rogue'?0.4:0.8);
-    if(res.k==='inv'){const red=honest?res.red:!res.red;say(p,rnd([`${res.t.name}を調べた。${TEAM[red?'red':'blue']}だったぞ`,`調査結果、${res.t.name}は${TEAM[red?'red':'blue']}`]));broadcastClaim(p,{k:'target',t:res.t.id,red})}
-    else{const same=honest?res.same:!res.same;say(p,`${res.a.name}と${res.b.name}を照合した。${same?'同じ陣営':'別の陣営'}だった`);broadcastClaim(p,{k:'pair',a:res.a.id,b:res.b.id,same})}
+    if(res.k==='inv'){const red=honest?res.red:!res.red;say(p,rnd([`${res.t.name}を調べた。${TEAM[red?'red':'blue']}だったぞ`,`調査結果、${res.t.name}は${TEAM[red?'red':'blue']}`]));broadcastClaim(p,{k:'target',t:res.t.id,red});rvClaim(p,{k:'target',t:res.t.id,red})}
+    else{const same=honest?res.same:!res.same;say(p,`${res.a.name}と${res.b.name}を照合した。${same?'同じ陣営':'別の陣営'}だった`);broadcastClaim(p,{k:'pair',a:res.a.id,b:res.b.id,same});rvClaim(p,{k:'pair',a:res.a.id,b:res.b.id,same})}
   }
   function reactCard(user){if(G.mitsudanDone&&Math.random()<0.3){const o=rnd(bots().filter(x=>x!==user));o&&setTimeout(()=>bsay(o,rnd(['何を使った？','今のは何のカードだ','動いたな','……ほう']),'banter'),900*speed)}}
   function botCheat(p,act){
     const ci=p.cards.findIndex(c=>c.type==='cheat'&&!c.used);
-    if(ci<0||p.cardsUsed>=2||p.usedThisRound||Math.random()>0.45)return;
+    if(ci<0||p.cardsUsed>=USE||p.usedThisRound||Math.random()>0.45)return;
     let i=-1,face=0;
     if(act.type==='doubt'&&G.bid){i=p.dice.findIndex(d=>d===G.bid.f);face=G.bid.f===1?2:1}
     else if(act.type==='bid'){i=p.dice.findIndex(d=>d!==act.f);face=act.f}
@@ -236,7 +262,7 @@ function createGame(opts){
     const ci=a.ci|0,c=p.cards[ci];if(!c||c.used||c.reserved)return;
     const def=CARDS[c.type];
     if(def.reaction||!(G.phase==='prep'||G.phase==='bidding')||G.revealed)return;
-    if(p.usedThisRound||p.cardsUsed>=2)return;
+    if(p.usedThisRound||p.cardsUsed>=USE)return;
     if(def.late&&!G.mitsudanDone)return;
     if(def.biddingOnly&&G.phase!=='bidding')return;
     const targets=(Array.isArray(a.targets)?a.targets:[]).map(byId);
@@ -263,7 +289,7 @@ function createGame(opts){
   function chat(pid,text){
     const p=byId(pid);if(!p)return;const t=String(text||'').trim().slice(0,100);if(!t)return;
     say(p,t);if(G.over)return;
-    const cls=parseClaims(t,p);cls.forEach(c=>broadcastClaim(p,c,1));
+    const cls=parseClaims(t,p);cls.forEach(c=>{broadcastClaim(p,c,1);rvClaim(p,c)});
     const named=bots().filter(b=>t.includes(b.name));const r=named.length?rnd(named):(Math.random()<0.3?rnd(bots()):null);
     if(r)setTimeout(()=>bsay(r,replyTo(r,t,cls,p),'reply'),(900+Math.random()*900)*speed);
   }
@@ -274,7 +300,7 @@ function createGame(opts){
     const t=shuffle(others(p)).sort((a,b)=>Math.abs(p.ai.lo[b.id])-Math.abs(p.ai.lo[a.id]))[0];
     if(Math.abs(p.ai.lo[t.id])<0.4){bsay(p,rnd(['まだ誰が誰だか見えないな','そろそろ誰か正体を明かしてくれよ','静かなやつほど怪しいんだよな']),'banter');return}
     let red=p.ai.lo[t.id]>0;if(Math.random()>(p.team==='rogue'?0.4:0.75))red=!red;
-    say(p,`${t.name}は${TEAM[red?'red':'blue']}だと睨んでる`);broadcastClaim(p,{k:'target',t:t.id,red},0.7);
+    say(p,`${t.name}は${TEAM[red?'red':'blue']}だと睨んでる`);broadcastClaim(p,{k:'target',t:t.id,red},0.7);rvClaim(p,{k:'target',t:t.id,red});
   }
   const validAct=a=>a&&((a.type==='doubt'&&G.bid)||(a.type==='bid'&&isValid(a.c,a.f)));
   async function playRound(r){
@@ -282,7 +308,7 @@ function createGame(opts){
     G.players.forEach(p=>{p.dice=roll();p.usedThisRound=false;p.scapegoat=false});
     // 手番順を丸ごとシャッフルし、まだ親をやっていない人のうち一番前にいる人を先頭（親）に移す
     const sh=shuffle([...G.players]);let fi=sh.findIndex(p=>!G.parents.has(p));if(fi<0)fi=0;
-    const first=sh.splice(fi,1)[0];G.order=[first,...sh];G.parents.add(first);
+    const first=sh.splice(fi,1)[0];G.order=[first,...sh];G.parents.add(first);(G.parentLog=G.parentLog||{})[r]=first.name;
     sys(`ラウンド${r} 開始 ｜ 親は${first.name} ｜ 手番順：${G.order.map(p=>p.name).join(' → ')}`);
     humans().forEach(h=>{const pk=h.peek;if(pk&&r<=pk.until){const t=byId(pk.id);priv(h,`のぞき：${esc(t.name)} の今回のダイス<br>${t.dice.map(d=>dieHTML(d)).join(' ')}`,true)}});
     roundChatter();
@@ -314,13 +340,14 @@ function createGame(opts){
     G.phase='reveal';G.turn=null;sync();
     let matta=null;
     const mi=b.cards.findIndex(x=>x.type==='matta'&&!x.used&&!x.reserved);
-    if(mi>=0&&b.cardsUsed<2){
+    if(mi>=0&&b.cardsUsed<USE){
       let ch2=null;
       if(b.isBot)ch2=botMatta(b,c,f);
       else{const v=await ask(b,'matta',{c,f,by:ch.name},T.matta);ch2=v&&Array.isArray(v.changes)?v.changes:null}
       if(ch2){const seen=new Set();ch2=ch2.map(x=>({i:x.i|0,face:x.face|0})).filter(x=>x.i>=0&&x.i<5&&x.face>=1&&x.face<=6&&!seen.has(x.i)&&seen.add(x.i)).slice(0,2)}
       if(ch2&&ch2.length){const card=b.cards[mi];card.used=true;b.cardsUsed++;
         const changed=ch2.map(x=>x.i);ch2.forEach(x=>{b.dice[x.i]=x.face});matta={name:b.name,n:ch2.length,changed};b.useRounds.push(G.round);b.revealed.push('待った');note(b,`待った：ダイスを${ch2.length}個変えた`);G.effects.push({round:G.round,text:`${b.name}の待った！（ダイス${ch2.length}個変更）`});
+        rv('card',`${b.name}：待った（ダイス${ch2.length}個を変更）`,{who:b.name,card:'待った'});
         sys(`${b.name}の「待った！」 ダイスを${ch2.length}個変えた`)}
     }
     const actual=G.players.reduce((s,p)=>s+p.dice.filter(d=>d===f).length,0),truth=actual>=c;
@@ -334,6 +361,7 @@ function createGame(opts){
     const nd=G.players.length*5;
     await sleep(1000+(matta?1200:0)+150*nd+220*G.players.length+700+2600);
     pub('rv',G.order.map(p=>`<div class="r"><b>${esc(p.name)}</b>${p.dice.map(d=>dieHTML(d,d===f?'hit':'dim')).join('')}</div>`).join(''));
+    rv('doubt',`${ch.name}が${b.name}の「${c}個の${f}」をダウト → 実際${actual}個で${truth?'本当':'嘘'}。${payer.name}→${winner.name} ${amount+bonus}枚${sg?'（身代わり）':''}${bonus?'（看破ボーナス込み）':''}`);
     sys(`「${f}」は${actual}個。宣言は${truth?'本当':'嘘'}だった！ ${loser.name}の負け`);
     if(sg)sys(`身代わり発動！ ${loser.name}の支払いを${payer.name}がかぶった`);
     sys(`${payer.name} → ${winner.name}に金貨${amount}枚${G.mult>1?`（賭け金${G.mult}倍）`:''}`);
@@ -401,6 +429,8 @@ function createGame(opts){
       else if(a.isBot||b.isBot){const bot=a.isBot?a:b,hu=a.isBot?b:a;pushT(th,bot,rnd(['で、あんたはどっち側だい？','単刀直入に聞く。どっちの陣営だ？']));th.needAnswer=hu.id}}
     sync();
     await Promise.all(humans().map(h=>ask(h,'mitsudan',{},T.mitsudan)));
+    G.allThreads=Object.values(G.threads).map(th=>({a:byId(th.a).name,b:byId(th.b).name,log:th.log.map(e=>{const sp=byId(e.from);
+      const cl=(e.claims||[]).map(c=>{const n0=G.review.length;rvClaim(sp,c);const r=G.review.length>n0?G.review.pop():null;return r?{truth:r.truth,real:r.real}:null}).filter(Boolean);return{name:e.name,text:e.text,check:cl}})}));
     humans().forEach(h=>threadsOf(h).forEach(th=>{const o=byId(th.a===h.id?th.b:th.a);
       priv(h,`密談：${o.name}との会話\n`+th.log.map(e=>`${e.name}「${e.text}」`).join('\n'))}));
     G.mitsudanDone=true;
@@ -455,7 +485,7 @@ function createGame(opts){
       ready:G.phase==='prep'?{n:G.ready.size,of:humans().length}:null,
       threads:G.phase==='mitsudan'?threadsOf(p).map(th=>{const o=byId(th.a===p.id?th.b:th.a);
         return{key:th.key,with:{id:o.id,name:o.name,isBot:o.isBot},log:th.log.map(e=>({from:e.from,name:e.name,text:e.text})),asked:th.asked,needAnswer:th.needAnswer===p.id}}):[],
-      result:G.result,
+      result:G.result,rule:G.rule,review:G.over?{events:G.review,threads:G.allThreads,rounds:G.rounds,mid:G.mid,parents:G.parentLog}:null,
       cardlog:{mid:G.mid,mitsudanDone:G.mitsudanDone,effects:G.effects,mine:p.myLog,
         players:G.players.map(q=>{const open=G.mitsudanDone||q===p||G.over;
           return{name:q.name,me:q===p,first:open?q.useRounds.filter(r=>r<=G.mid).length:null,
@@ -464,11 +494,13 @@ function createGame(opts){
   }
 
   function intro(){
+    rv('start',`配役：${G.players.map(p=>`${p.name}=${TT(p.team)}`).join('、')}`);
+    G.players.forEach(p=>rv('hand',`${p.name}の手札：${p.cards.map(c=>CARDS[c.type].name).join('・')}`));
     sys('— 酒場の卓に着いた —');
     humans().forEach(h=>{
       priv(h,h.team==='rogue'?`あなたは【詐欺師】。調べられると【${TEAM[h.cover]}】に見える。\n金貨が単独1位で、最後の告発で過半数に名指しされなければ単独勝利。`
         :`あなたは【${TEAM[h.team]}】陣営。仲間が誰かはわからない。\n最後に${TEAM[h.team]}陣営の金貨合計が多ければ勝ち。`);
-      priv(h,`配られたカード：${h.cards.map(c=>CARDS[c.type].name).join('・')}\nこのうち2枚を、好きなラウンドで1枚ずつ使える。`);
+      priv(h,`配られたカード：${h.cards.map(c=>CARDS[c.type].name).join('・')}\nこのうち${USE}枚を、好きなラウンドで1枚ずつ使える。`);
     });
   }
   async function start(){

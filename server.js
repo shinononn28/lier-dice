@@ -12,11 +12,13 @@ app.get('/healthz',(req,res)=>res.send('ok'));
 const server=http.createServer(app);
 const io=new Server(server);
 
-const TIMEOUTS={turn:60000,prep:45000,matta:15000,partner:30000,mitsudan:180000,accuse:90000};
+// ホストがロビーで選べる制限時間（秒）。先頭が既定値
+const TIMER_OPTS={turn:[60,30,90,120],prep:[45,30,60],mitsudan:[180,120,300],accuse:[90,60,120]};
+const defaultTimers=()=>Object.fromEntries(Object.entries(TIMER_OPTS).map(([k,v])=>[k,v[0]]));
 const rooms=new Map();
 const clean=s=>String(s||'').replace(/[\u0000-\u001f<>]/g,'').trim().slice(0,8)||'名無し';
 function genCode(){const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let c;do{c=Array.from({length:4},()=>A[Math.floor(Math.random()*A.length)]).join('')}while(rooms.has(c));return c}
-function info(r,key){return{code:r.code,n:r.n,botChat:r.botChat,started:!!r.game,isHost:r.host===key,
+function info(r,key){return{code:r.code,n:r.n,botChat:r.botChat,timers:r.timers,timerOpts:TIMER_OPTS,started:!!r.game,isHost:r.host===key,
   members:r.members.map(m=>({name:m.name,host:m.key===r.host,connected:m.connected}))}}
 function lsys(r,text){const m={sys:true,text};r.chat.push(m);if(r.chat.length>80)r.chat.shift();io.to(r.code).emit('lchat',m)}
 function pushRoom(r){r.members.forEach(m=>m.socket&&m.socket.emit('room',info(r,m.key)))}
@@ -29,7 +31,8 @@ function startGame(r){
     if(type==='log')targets.forEach(m=>{const L=r.logs[m.key]||(r.logs[m.key]=[]);L.push(data);if(L.length>600)L.shift()});
     targets.forEach(m=>m.socket&&m.socket.emit(type,data));
   };
-  r.game=createGame({humans:r.members.map(m=>({id:m.key,name:m.name})),total:Math.max(r.n,r.members.length),speed:1,emit,timeouts:TIMEOUTS,botChat:r.botChat});
+  r.game=createGame({humans:r.members.map(m=>({id:m.key,name:m.name})),total:Math.max(r.n,r.members.length),speed:1,emit,botChat:r.botChat,
+    timeouts:{turn:r.timers.turn*1000,prep:r.timers.prep*1000,matta:15000,partner:30000,mitsudan:r.timers.mitsudan*1000,accuse:r.timers.accuse*1000}});
   pushRoom(r);r.game.start();
 }
 function cleanupLater(r){clearTimeout(r.cleanup);r.cleanup=setTimeout(()=>{if(r.members.every(m=>!m.connected))rooms.delete(r.code)},30*60*1000)}
@@ -58,10 +61,11 @@ io.on('connection',sock=>{
     else{r.members=r.members.filter(x=>x!==m);if(r.host===m.key&&r.members[0])r.host=r.members[0].key;lsys(r,`${m.name}が退出した`)}
     if(!r.members.length)rooms.delete(r.code);else{pushRoom(r);if(r.members.every(x=>!x.connected))cleanupLater(r)}
   }
-  sock.on('create',d=>{if(!me)return;const r={code:genCode(),host:me.key,n:[4,5,6].includes(d&&d.n)?d.n:5,members:[],game:null,logs:{},chat:[],botChat:'off'};rooms.set(r.code,r);join(r)});
+  sock.on('create',d=>{if(!me)return;const r={code:genCode(),host:me.key,n:[4,5,6].includes(d&&d.n)?d.n:5,members:[],game:null,logs:{},chat:[],botChat:'off',timers:defaultTimers()};rooms.set(r.code,r);join(r)});
   sock.on('join',d=>{const r=rooms.get(String(d&&d.code||'').toUpperCase());if(!r)return sock.emit('errorMsg','ルームが見つからない');join(r)});
   sock.on('settings',d=>{if(!room||room.game||room.host!==me.key||!d)return;
-    if([4,5,6].includes(d.n))room.n=d.n;if(['on','low','off'].includes(d.botChat))room.botChat=d.botChat;pushRoom(room)});
+    if([4,5,6].includes(d.n))room.n=d.n;if(['on','low','off'].includes(d.botChat))room.botChat=d.botChat;
+    if(d.timer&&TIMER_OPTS[d.timer.key]&&TIMER_OPTS[d.timer.key].includes(d.timer.sec))room.timers[d.timer.key]=d.timer.sec;pushRoom(room)});
   sock.on('start',()=>{if(room&&!room.game&&room.host===me.key)startGame(room)});
   sock.on('rematch',()=>{if(room&&room.game&&room.host===me.key&&room.game.isOver()){room.game=null;room.logs={};
     room.members=room.members.filter(m=>m.connected);pushRoom(room)}});
