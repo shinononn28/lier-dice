@@ -266,6 +266,12 @@ input{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--lin
   .flip .fb{opacity:0}.flip.up .fb{opacity:1}.flip.up .fa{opacity:0}
   .vstamp{animation:popin .3s ease-out both}
 }
+.pill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:55;background:var(--ink);color:var(--bg);border-color:var(--ink);border-radius:999px;padding:8px 18px;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+.pill .cd{color:#ffb4a8}
+.mine .back{position:relative}
+.pdot{position:absolute;top:-3px;right:-3px;width:12px;height:12px;border-radius:50%;background:var(--red);box-shadow:0 0 0 2px var(--bg)}
+.pdot[hidden]{display:none}
+.sheet-wrap[hidden]{display:none}
 .mtrow{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
 </style>
 </head>
@@ -336,10 +342,10 @@ function tail(k,m,p=1/6){if(k<=0)return 1;if(k>m)return 0;let s=0;for(let i=k;i<
 function createGame(opts){
   const emit=opts.emit,speed=opts.speed||1;
   const T=Object.assign({turn:null,prep:null,matta:null,partner:null,mitsudan:null,accuse:null},opts.timeouts||{});
-  const BONUS_GAP=opts.bonusGap??3,BONUS=opts.bonus??2;
+  const BONUS_GAP=opts.bonusGap??3,BONUS=opts.bonus??2,BOTCHAT=opts.botChat||'on';
   const sleep=ms=>new Promise(r=>setTimeout(r,ms*speed));
   const raw=ms=>new Promise(r=>setTimeout(r,ms));
-  const G={players:[],order:[],rotation:[],rounds:0,mid:0,round:0,bid:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,
+  const G={players:[],order:[],rounds:0,mid:0,round:0,bid:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,
     phase:'start',revealed:false,lastReveal:null,turn:null,mitsudanDone:false,threads:{},pendingTaps:[],cardQueue:[],
     pending:{},ready:new Set(),over:false,result:null,effects:[]};
   let promptSeq=0,paused=0;
@@ -356,7 +362,7 @@ function createGame(opts){
     cards:deck.slice(i*3,i*3+3).map(t=>({type:t,used:false,reserved:false})),ai:{lo:{},susp:{},results:[]},useRounds:[],revealed:[],myLog:[]});
     p.cover=p.team==='rogue'?rnd(['red','blue']):p.team;p.origTeam=p.team;});
   ps.forEach(p=>ps.forEach(q=>{if(q!==p){p.ai.lo[q.id]=0;p.ai.susp[q.id]=0}}));
-  G.players=ps;G.rotation=shuffle([...ps]);G.rounds=n;G.mid=Math.ceil(n/2);
+  G.players=ps;G.parents=new Set();G.rounds=n;G.mid=Math.ceil(n/2);
 
   const byId=id=>G.players.find(p=>p.id===String(id));
   const humans=()=>G.players.filter(p=>!p.isBot);
@@ -372,6 +378,9 @@ function createGame(opts){
   const sys=t=>pub('sys',esc(t));
   const pubPopup=(title,lines,except)=>humans().forEach(h=>{if(h!==except)emit(h.id,'popup',{title,lines})});
   const say=(p,t)=>pub('chat',`<b>${esc(p.name)}</b><span>${esc(t)}</span>`,{from:p.id});
+  // CPUの発言：kind = claim（推理に関わる主張）/ banter（雑談・リアクション）/ reply（返事）
+  const botOK=kind=>BOTCHAT==='on'||(BOTCHAT==='low'&&kind==='claim');
+  const bsay=(p,t,kind)=>{if(!botOK(kind))return false;say(p,t);return true};
   function priv(p,text,isHtml){if(p.isBot)return;
     const label=`${G.round?`ラウンド${G.round}`:'開始時'}${G.phase==='mitsudan'?'・密談':''}`;
     emit(p.id,'log',{kind:'priv',html:`<span class="rd">${label}</span>${isHtml?text:esc(text)}`})}
@@ -498,12 +507,12 @@ function createGame(opts){
     return{ci:pick.i,targets,extra:null};
   }
   function botAnnounce(p,res){
-    if(!res||Math.random()>0.55)return;
+    if(!res||!botOK('claim')||Math.random()>0.55)return;
     const honest=Math.random()<(p.team==='rogue'?0.4:0.8);
     if(res.k==='inv'){const red=honest?res.red:!res.red;say(p,rnd([`${res.t.name}を調べた。${TEAM[red?'red':'blue']}だったぞ`,`調査結果、${res.t.name}は${TEAM[red?'red':'blue']}`]));broadcastClaim(p,{k:'target',t:res.t.id,red})}
     else{const same=honest?res.same:!res.same;say(p,`${res.a.name}と${res.b.name}を照合した。${same?'同じ陣営':'別の陣営'}だった`);broadcastClaim(p,{k:'pair',a:res.a.id,b:res.b.id,same})}
   }
-  function reactCard(user){if(G.mitsudanDone&&Math.random()<0.3){const o=rnd(bots().filter(x=>x!==user));o&&setTimeout(()=>say(o,rnd(['何を使った？','今のは何のカードだ','動いたな','……ほう'])),900*speed)}}
+  function reactCard(user){if(G.mitsudanDone&&Math.random()<0.3){const o=rnd(bots().filter(x=>x!==user));o&&setTimeout(()=>bsay(o,rnd(['何を使った？','今のは何のカードだ','動いたな','……ほう']),'banter'),900*speed)}}
   function botCheat(p,act){
     const ci=p.cards.findIndex(c=>c.type==='cheat'&&!c.used);
     if(ci<0||p.cardsUsed>=2||p.usedThisRound||Math.random()>0.45)return;
@@ -526,7 +535,7 @@ function createGame(opts){
     const results=[...q.filter(x=>ty(x)==='frame'),...shuffle(q.filter(x=>ty(x)!=='frame'&&ty(x)!=='swap')),...q.filter(x=>ty(x)==='swap')]
       .map(x=>[x.p,applyCard(x.p,x.ci,x.targets,x.extra,true)]);
     sync();
-    const bs=bots();if(G.mitsudanDone&&bs.length&&Math.random()<0.4)say(rnd(bs),rnd(['一斉に動いたな','何を仕込んだ？','怪しい手が多いな']));
+    const bs=bots();if(G.mitsudanDone&&bs.length&&Math.random()<0.4)bsay(rnd(bs),rnd(['一斉に動いたな','何を仕込んだ？','怪しい手が多いな']),'banter');
     for(const[p,res]of shuffle(results))if(p.isBot&&res){await sleep(500);botAnnounce(p,res)}
   }
 
@@ -565,14 +574,14 @@ function createGame(opts){
     say(p,t);if(G.over)return;
     const cls=parseClaims(t,p);cls.forEach(c=>broadcastClaim(p,c,1));
     const named=bots().filter(b=>t.includes(b.name));const r=named.length?rnd(named):(Math.random()<0.3?rnd(bots()):null);
-    if(r)setTimeout(()=>say(r,replyTo(r,t,cls,p)),(900+Math.random()*900)*speed);
+    if(r)setTimeout(()=>bsay(r,replyTo(r,t,cls,p),'reply'),(900+Math.random()*900)*speed);
   }
 
   /* ---- round ---- */
   function roundChatter(){
-    if(G.round<2||Math.random()<0.4||!bots().length)return;const p=rnd(bots());
+    if(G.round<2||Math.random()<0.4||!bots().length||!botOK('claim'))return;const p=rnd(bots());
     const t=shuffle(others(p)).sort((a,b)=>Math.abs(p.ai.lo[b.id])-Math.abs(p.ai.lo[a.id]))[0];
-    if(Math.abs(p.ai.lo[t.id])<0.4){say(p,rnd(['まだ誰が誰だか見えないな','そろそろ誰か正体を明かしてくれよ','静かなやつほど怪しいんだよな']));return}
+    if(Math.abs(p.ai.lo[t.id])<0.4){bsay(p,rnd(['まだ誰が誰だか見えないな','そろそろ誰か正体を明かしてくれよ','静かなやつほど怪しいんだよな']),'banter');return}
     let red=p.ai.lo[t.id]>0;if(Math.random()>(p.team==='rogue'?0.4:0.75))red=!red;
     say(p,`${t.name}は${TEAM[red?'red':'blue']}だと睨んでる`);broadcastClaim(p,{k:'target',t:t.id,red},0.7);
   }
@@ -580,7 +589,9 @@ function createGame(opts){
   async function playRound(r){
     Object.assign(G,{round:r,bid:null,revealed:false,lastReveal:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,phase:'prep',turn:null});
     G.players.forEach(p=>{p.dice=roll();p.usedThisRound=false;p.scapegoat=false});
-    const first=G.rotation[(r-1)%G.rotation.length];G.order=[first,...shuffle(G.players.filter(p=>p!==first))];
+    // 手番順を丸ごとシャッフルし、まだ親をやっていない人のうち一番前にいる人を先頭（親）に移す
+    const sh=shuffle([...G.players]);let fi=sh.findIndex(p=>!G.parents.has(p));if(fi<0)fi=0;
+    const first=sh.splice(fi,1)[0];G.order=[first,...sh];G.parents.add(first);
     sys(`ラウンド${r} 開始 ｜ 親は${first.name} ｜ 手番順：${G.order.map(p=>p.name).join(' → ')}`);
     humans().forEach(h=>{const pk=h.peek;if(pk&&r<=pk.until){const t=byId(pk.id);priv(h,`のぞき：${esc(t.name)} の今回のダイス<br>${t.dice.map(d=>dieHTML(d)).join(' ')}`,true)}});
     roundChatter();
@@ -598,8 +609,8 @@ function createGame(opts){
       if(act.type==='bid'){
         G.bid={c:act.c,f:act.f,by:p};G.maxDecl[act.f]=act.c;G.history.push({n:p.name,c:act.c,f:act.f});
         pub('bid',`<b>${esc(p.name)}</b><span>${act.c}個の</span>${dieHTML(act.f)}`);observeBid(p,act.f,next);
-        if(next.isBot&&act.f>=5&&Math.random()<.35)setTimeout(()=>say(next,rnd(['強気だねぇ',`その${act.f}、本当にあるのか？`,'重いのを押し付けてくるな','ほう…'])),400*speed);
-        else if(next.isBot&&act.f<=2&&Math.random()<.15)setTimeout(()=>say(next,rnd(['優しいねぇ','軽いな、助かるよ'])),400*speed);
+        if(next.isBot&&act.f>=5&&Math.random()<.35)setTimeout(()=>bsay(next,rnd(['強気だねぇ',`その${act.f}、本当にあるのか？`,'重いのを押し付けてくるな','ほう…']),'banter'),400*speed);
+        else if(next.isBot&&act.f<=2&&Math.random()<.15)setTimeout(()=>bsay(next,rnd(['優しいねぇ','軽いな、助かるよ']),'banter'),400*speed);
         i++;
       }else{await resolveDoubt(p);break}
     }
@@ -607,7 +618,7 @@ function createGame(opts){
   }
   async function resolveDoubt(ch){
     const b=G.bid.by,{c,f}=G.bid;
-    say(ch,ch.isBot?rnd(['ダウトだ！','それは無いな','嘘だね']):'ダウト！');
+    if(ch.isBot){if(!bsay(ch,rnd(['ダウトだ！','それは無いな','嘘だね']),'banter'))sys(`${ch.name}がダウト！`)}else say(ch,'ダウト！');
     bots().forEach(o=>pairEvidence(o,ch.id,b.id,false,0.2));
     G.phase='reveal';G.turn=null;sync();
     let matta=null;
@@ -639,9 +650,9 @@ function createGame(opts){
     if(bonus){sys(`看破ボーナス！ 宣言が実際より${c-actual}個も多かった。${payer.name}からさらに金貨${bonus}枚を奪取`);
       G.effects.push({round:G.round,text:`看破ボーナス：${ch.name}が${payer.name}から+${bonus}（宣言${c}個／実際${actual}個）`})}
     G.lastReveal={f,c,actual,truth,by:b.name,loser:loser.name,payer:payer.name,amount:amount+bonus};G.revealed=true;sync();
-    if(loser.isBot&&Math.random()<.6)say(loser,rnd(['くっ…','やられた','次は取り返す','読まれてたか']));
-    else if(winner.isBot&&Math.random()<.4)say(winner,rnd(['読み通り','ごちそうさま','悪いね']));
-    if(sg&&payer.isBot)setTimeout(()=>say(payer,rnd(['なんで俺が払うんだ！','身代わりだと…？','覚えてろよ'])),500*speed);
+    if(loser.isBot&&Math.random()<.6)bsay(loser,rnd(['くっ…','やられた','次は取り返す','読まれてたか']),'banter');
+    else if(winner.isBot&&Math.random()<.4)bsay(winner,rnd(['読み通り','ごちそうさま','悪いね']),'banter');
+    if(sg&&payer.isBot)setTimeout(()=>bsay(payer,rnd(['なんで俺が払うんだ！','身代わりだと…？','覚えてろよ']),'banter'),500*speed);
     await sleep(900);
   }
 
@@ -797,7 +808,9 @@ function pauseEngine(d){if(mode==='cpu'&&net)net.send('pause',d)}
 function openSheet(html,cls=''){const w=document.createElement('div');w.className='sheet-wrap';
   w.innerHTML=`<div class="sheet ${cls}" role="dialog" aria-modal="true">${html}</div>`;document.body.appendChild(w);sheetOpen++;pauseEngine(1);lastSheet=w;
   setTimeout(()=>{const f=w.querySelector('button.primary,button,input');f&&f.focus({preventScroll:true})},30);return w}
-function closeSheet(w){if(!w||!w.isConnected)return;w.remove();sheetOpen--;pauseEngine(-1);render()}
+function closeSheet(w){if(!w||!w.isConnected)return;w.remove();if(!w._min){sheetOpen--;pauseEngine(-1)}render()}
+function minimizeSheet(w,label){if(w._min)return;w._min=true;w._label=label;w._new=false;w.hidden=true;sheetOpen--;pauseEngine(-1);render()}
+function restoreSheet(w){if(!w._min)return;w._min=false;w._new=false;w.hidden=false;sheetOpen++;pauseEngine(1);render();w._onRestore&&w._onRestore()}
 function toast(t){const d=document.createElement('div');d.className='toast';d.textContent=t;document.body.appendChild(d);setTimeout(()=>d.remove(),2600)}
 function confirmSheet(title,body,yes='使う',no='やめる'){return new Promise(res=>{
   const w=openSheet(`<h3>${esc(title)}</h3><p class="muted">${esc(body)}</p><div class="row end"><button data-x="n">${esc(no)}</button><button class="primary" data-x="y">${esc(yes)}</button></div>`);
@@ -861,7 +874,7 @@ function seatHTML(p){
     <div class="st"><span class="coins"><span class="coin"></span>${p.coins}</span><span class="cardpips">${pips}</span></div></${el}>`;
 }
 function cdText(){const pr=S&&S.prompt;if(!pr||!pr.deadline)return'';const s=Math.max(0,Math.ceil((pr.deadline-Date.now())/1000));return `残り${s}秒`}
-setInterval(()=>{const el=document.querySelector('.cd');if(el)el.textContent=cdText()},500);
+setInterval(()=>{document.querySelectorAll('.cd').forEach(el=>el.textContent=cdText())},500);
 function render(){
   if(!S)return;const me=S.me,T=S.totalDice;
   $('#round').textContent=S.over?'終了':S.round?`R${S.round} / ${S.rounds}`:'';
@@ -884,7 +897,8 @@ function render(){
   else if(pr&&pr.kind==='ready'){const rd=S.ready;ctrl=`<div class="info">ラウンド${S.round}の準備中。${me.usedThisRound?'カードを予約した。宣言開始と同時に発動する。':'今使うカードは全員同時に発動する（濡れ衣が最優先）。'}<span class="cd">${cdText()}</span></div>
       <button class="primary" data-act="ready">${rd&&rd.of>1?`準備完了（${rd.n}/${rd.of}）`:'宣言を始める'}</button>`}
   else if(S.phase==='prep'){const rd=S.ready;ctrl=`<div class="info">ほかの人の準備を待っています${rd?`（${rd.n}/${rd.of}）`:''}</div><button class="primary" disabled>待機中</button>`}
-  else if(S.phase==='mitsudan'||S.phase==='accuse'||S.phase==='between'){ctrl=`<div class="info">${S.phase==='mitsudan'?'密談中…':S.phase==='accuse'?'告発中…':'…'}<span class="cd">${cdText()}</span></div>${pr&&['partner','mitsudan','accuse'].includes(pr.kind)?'<button class="primary" data-act="reopen">画面を開く</button>':''}`}
+  else if(S.phase==='mitsudan'||S.phase==='accuse'||S.phase==='between'){ctrl=`<div class="info">${S.phase==='mitsudan'?'密談中…':S.phase==='accuse'?'告発中…':'…'}<span class="cd">${cdText()}</span></div>${pr&&['partner','mitsudan','accuse'].includes(pr.kind)?(()=>{const mw=promptSheet&&promptSheet.w&&promptSheet.w._min?promptSheet.w:null;
+      return `<button class="primary back" data-act="reopen">${mw?`${mw._label}に戻る`:'画面を開く'}${mw&&mw._new?'<span class="pdot"></span>':''}</button>`})():''}`}
   else ctrl=`<div class="line">
       <div class="stepper"><button data-act="cm" aria-label="個数を減らす" ${dis}>−</button><span class="cnt disp">${sel.c}</span><span class="u">個の</span><button data-act="cp" aria-label="個数を増やす" ${dis}>＋</button></div>
       <div class="acts"><button class="primary" data-act="bid" ${turn&&isValid(sel.c,sel.f)?'':'disabled'}>宣言</button><button class="doubt" data-act="doubt" ${turn&&S.bid?'':'disabled'}>ダウト</button></div></div>
@@ -931,7 +945,7 @@ document.addEventListener('click',e=>{
   else if(a==='ready'&&S.prompt&&S.prompt.kind==='ready'){net.send('respond',{kind:'ready',value:true})}
   else if(a==='card')useCard(+b.dataset.i);
   else if(a==='result')showResult();
-  else if(a==='reopen'&&S.prompt){opened.delete(S.prompt.id);handlePrompt()}
+  else if(a==='reopen'&&S.prompt){if(promptSheet&&promptSheet.w&&promptSheet.w._min)restoreSheet(promptSheet.w);else if(!promptSheet||!promptSheet.w||!promptSheet.w.isConnected){opened.delete(S.prompt.id);handlePrompt()}}
 });
 async function useCard(i){
   if(!canUseCards())return;const c=S.me.cards[i],d=CARDS[c.type];if(!cardReady(c))return;
@@ -979,8 +993,8 @@ function openMitsudan(){
   const w=openSheet(`<h3>密談 <span class="cd">${cdText()}</span></h3><p class="muted small">ここでの会話は相手と2人だけ。ただし盗聴されているかもしれない。会話は終了時に手帳へ保存される。</p>
     <div class="thtabs"></div><div class="mlog"></div><div class="mbtns"></div>
     <div class="chatin"><input placeholder="自由に話す（例：ボルドは青だと思う）" maxlength="100" aria-label="密談の入力"><button data-x="send">送る</button></div>
-    <div class="row end"><button class="primary" data-x="end">密談を終える</button></div>`);
-  mitsu={w,key:null};promptSheet.w=w;
+    <div class="row end"><button data-x="min">卓を見る</button><button class="primary" data-x="end">密談を終える</button></div>`);
+  mitsu={w,key:null,seen:0};promptSheet.w=w;w._onRestore=()=>{mitsu&&(mitsu.seen=-1);drawMitsudan()};
   const inp=w.querySelector('input');
   const send=()=>{const t=inp.value.trim();if(!t||!mitsu.key)return;inp.value='';net.send('dm',{key:mitsu.key,text:t})};
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing)send()});
@@ -989,6 +1003,7 @@ function openMitsudan(){
     else if(b.dataset.ans)net.send('dm',{key:mitsu.key,ans:b.dataset.ans});
     else if(b.dataset.q)net.send('dm',{key:mitsu.key,q:b.dataset.q});
     else if(b.dataset.x==='send')send();
+    else if(b.dataset.x==='min')minimizeSheet(w,'密談');
     else if(b.dataset.x==='end'){net.send('respond',{kind:'mitsudan',value:true});promptSheet=null;mitsu=null;closeSheet(w)}});
   w._cancel=()=>{mitsu=null;closeSheet(w)};
   drawMitsudan();
@@ -1001,6 +1016,9 @@ function drawMitsudan(){
   const lg=w.querySelector('.mlog');
   lg.innerHTML=th?`<div class="msg sys">${esc(th.with.name)}との密談</div>`+th.log.map(e=>`<div class="msg chat ${e.from===S.you?'me':''}"><b>${esc(e.name)}</b><span>${esc(e.text)}</span></div>`).join(''):'<div class="msg sys">相手を待っています…</div>';
   lg.scrollTop=lg.scrollHeight;
+  const total=ths.reduce((a,t)=>a+t.log.length,0);
+  if(w._min&&mitsu.seen>=0&&total>mitsu.seen&&!w._new){w._new=true;render()}
+  if(!w._min)mitsu.seen=total;
   let btns='';
   if(th&&th.needAnswer)btns=`<button data-ans="red">赤だ</button><button data-ans="blue">青だ</button><button data-ans="none">言えないね</button>`;
   else if(th&&th.with.isBot)btns=Object.entries(QS).filter(([k])=>!th.asked.includes(k)).map(([k,l])=>`<button data-q="${k}">${l}</button>`).join('');
@@ -1012,10 +1030,11 @@ function openAccuse(pr){
   others.forEach(p=>{const m=marks[p.id];if(m==='red'||m==='blue')g[p.id]=m});
   const w=openSheet(`<h3>告発 <span class="cd">${cdText()}</span></h3><p class="muted small">全員の陣営を予想する。当たるたびに金貨+1。${opts.includes('rogue')?'詐欺師は過半数に名指しされると単独勝利を失う。':''}</p>
     <div class="acc">${others.map(p=>`<div class="r"><b>${esc(p.name)}</b><div class="seg" data-id="${esc(p.id)}">${opts.map(o=>`<button data-v="${o}" aria-pressed="${g[p.id]===o}">${TEAM[o]}</button>`).join('')}</div></div>`).join('')}</div>
-    <div class="row end"><button class="primary" data-x="ok" ${Object.keys(g).length===others.length?'':'disabled'}>告発する</button></div>`);
+    <div class="row end"><button data-x="min">卓を見る</button><button class="primary" data-x="ok" ${Object.keys(g).length===others.length?'':'disabled'}>告発する</button></div>`);
   promptSheet.w=w;
   w.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const seg=b.closest('.seg');
     if(seg){g[seg.dataset.id]=b.dataset.v;seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));w.querySelector('[data-x=ok]').disabled=Object.keys(g).length!==others.length;return}
+    if(b.dataset.x==='min')minimizeSheet(w,'告発');
     if(b.dataset.x==='ok'){net.send('respond',{kind:'accuse',value:g});promptSheet=null;closeSheet(w)}});
 }
 
@@ -1058,7 +1077,7 @@ function verdictShow(d,sp){return new Promise(res=>{
   const v=document.createElement('div');v.className='vdict';
   v.innerHTML=`<div class="vdc ${cls}" role="dialog" aria-live="assertive">
     ${top?`<div class="vtop">${top}</div>`:''}
-    <div class="vstamp disp ${d.truth?'t':'l'}">${d.truth?'宣言は本当':'嘘を見破った'}</div>
+    <div class="vstamp disp ${d.truth?'t':'l'}">${d.truth?'宣言は本当':'ウソだった！'}</div>
     <div class="vline">「${d.f}」は${d.actual}個 ／ 宣言は${d.c}個</div>
     <div class="vline"><b>${esc(d.loser)}</b>の負け</div>
     <div class="vcoins">${esc(d.payer)} → ${esc(d.winner)}<b class="disp">${total}枚</b></div>
@@ -1132,7 +1151,7 @@ function resetClient(){S=null;marks={};opened=new Set();lastDoubt=null;resultSho
 /* ---------- CPU mode ---------- */
 function startCpu(o){
   resetClient();mode='cpu';
-  const eng=createGame({humans:[{id:'me',name:o.name}],total:o.n,speed:o.speed,emit:(to,type,data)=>{if(to==='*'||to==='me')onEvent(type,data)}});
+  const eng=createGame({humans:[{id:'me',name:o.name}],total:o.n,speed:o.speed,botChat:o.botChat,emit:(to,type,data)=>{if(to==='*'||to==='me')onEvent(type,data)}});
   net={send(t,p){if(t==='respond')eng.respond('me',p.kind,p.value);else if(t==='action')eng.action('me',p);else if(t==='chat')eng.chat('me',p);else if(t==='dm')eng.dm('me',p);else if(t==='pause')eng.pause(p)}};
   eng.start();
 }
@@ -1146,31 +1165,49 @@ function connect(){
     if(r.started){if(lobbyW){closeSheet(lobbyW);lobbyW=null}if(!was){resetClient();mode='online'}}
     else{if(was){resetClient()}mode='online';showLobby()}});
   ['state','log','logs','doubt'].forEach(t=>socket.on(t,d=>onEvent(t,d)));
+  socket.on('lchatAll',a=>{lobbyChat=a;drawLobbyChat()});
+  socket.on('lchat',m=>{lobbyChat.push(m);if(lobbyChat.length>80)lobbyChat.shift();drawLobbyChat()});
   socket.on('errorMsg',m=>{toast(m);if(!room&&!document.querySelector('.home'))showHome()});
   return socket;
 }
-function showLobby(){
-  const r=room;const url=location.origin+location.pathname+'?room='+r.code;
-  const html=`<p class="muted small">ルームコード</p><div class="codebig disp">${esc(r.code)}</div>
+let lobbyChat=[];
+const BOTCHAT_OPTS=[['on','あり'],['low','推理だけ'],['off','なし']];
+function lobbyInfoHTML(){
+  const r=room,url=location.origin+location.pathname+'?room='+r.code;
+  return `<p class="muted small">ルームコード</p><div class="codebig disp">${esc(r.code)}</div>
     <div class="row"><button data-x="copy">招待リンクをコピー</button></div>
-    <p class="small muted" style="margin-top:8px">${esc(url)}</p>
-    <h3 style="margin-top:12px">参加者（${r.members.length}人）</h3><div class="members">${r.members.map(m=>`<div>${esc(m.name)}${m.host?' <span class="tag rogue">ホスト</span>':''}${m.connected?'':' <span class="small muted">切断中</span>'}</div>`).join('')}</div>
+    <p class="small muted" style="margin-top:6px;overflow-wrap:anywhere">${esc(url)}</p>
+    <h3 style="margin-top:10px">参加者（${r.members.length}人）</h3><div class="members">${r.members.map(m=>`<div>${esc(m.name)}${m.host?' <span class="tag rogue">ホスト</span>':''}${m.connected?'':' <span class="small muted">切断中</span>'}</div>`).join('')}</div>
     ${r.isHost?`<fieldset><legend>卓の人数（足りない分はCPU）</legend><div class="seg" data-g="n">${[4,5,6].map(n=>`<button data-v="${n}" aria-pressed="${r.n===n}">${n}人</button>`).join('')}</div></fieldset>
-      <div class="row end"><button data-x="leave">退出</button><button class="primary" data-x="start">ゲーム開始</button></div>`
-      :`<p class="muted">ホストの開始を待っています…（卓は${r.n}人）</p><div class="row end"><button data-x="leave">退出</button></div>`}`;
-  if(lobbyW&&lobbyW.isConnected){lobbyW.querySelector('.sheet').innerHTML=html;return}
-  lobbyW=openSheet(html);
+      <fieldset><legend>CPUのチャット</legend><div class="seg" data-g="bc">${BOTCHAT_OPTS.map(([v,l])=>`<button data-v="${v}" aria-pressed="${r.botChat===v}">${l}</button>`).join('')}</div></fieldset>`
+      :`<p class="muted small">ホストの開始を待っています…（卓は${r.n}人・CPUのチャット：${(BOTCHAT_OPTS.find(x=>x[0]===r.botChat)||[0,'なし'])[1]}）</p>`}`;
+}
+function drawLobbyChat(){if(!lobbyW)return;const lg=lobbyW.querySelector('.lchat');if(!lg)return;
+  lg.innerHTML=lobbyChat.length?lobbyChat.map(m=>m.sys?`<div class="msg sys">${esc(m.text)}</div>`:`<div class="msg chat ${m.key===myKey?'me':''}"><b>${esc(m.name)}</b><span>${esc(m.text)}</span></div>`).join(''):'<div class="msg sys">開始までここで話せます</div>';
+  lg.scrollTop=lg.scrollHeight}
+function showLobby(){
+  if(lobbyW&&lobbyW.isConnected){lobbyW.querySelector('.linfo').innerHTML=lobbyInfoHTML();
+    lobbyW.querySelector('[data-x=start]')&&(lobbyW.querySelector('[data-x=start]').hidden=!room.isHost);return}
+  lobbyW=openSheet(`<div class="linfo">${lobbyInfoHTML()}</div>
+    <div class="mlog lchat" style="height:150px"></div>
+    <div class="chatin"><input class="lin" placeholder="待ち時間の雑談" maxlength="100" aria-label="ロビーのチャット"><button data-x="lsend">送る</button></div>
+    <div class="row end"><button data-x="leave">退出</button><button class="primary" data-x="start" ${room.isHost?'':'hidden'}>ゲーム開始</button></div>`);
+  drawLobbyChat();
+  const inp=lobbyW.querySelector('.lin');
+  const send=()=>{const t=inp.value.trim();if(!t)return;inp.value='';socket.emit('lchat',t)};
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing)send()});
   lobbyW.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const seg=b.closest('.seg');
-    if(seg){socket.emit('settings',{n:+b.dataset.v});return}
+    if(seg){socket.emit('settings',seg.dataset.g==='bc'?{botChat:b.dataset.v}:{n:+b.dataset.v});return}
+    if(b.dataset.x==='lsend')send();
     if(b.dataset.x==='copy'){const u=location.origin+location.pathname+'?room='+room.code;(navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>toast('コピーした'),()=>toast(u))}
     if(b.dataset.x==='start')socket.emit('start');
-    if(b.dataset.x==='leave'){socket.emit('leave');room=null;closeSheet(lobbyW);lobbyW=null;history.replaceState(null,'',location.pathname);showHome()}});
+    if(b.dataset.x==='leave'){socket.emit('leave');room=null;lobbyChat=[];closeSheet(lobbyW);lobbyW=null;history.replaceState(null,'',location.pathname);showHome()}});
 }
 
 /* ---------- home ---------- */
 function showHome(){
   resetClient();mode=null;const qs=new URLSearchParams(location.search).get('room');
-  const opt={n:5,s:1};const name=store.get('nimai-name')||'';
+  const opt={n:5,s:1,bc:'on'};const name=store.get('nimai-name')||'';
   const w=openSheet(`<h1 class="disp title">二枚舌の酒場</h1><p>誰が味方かわからないまま、ダイスの嘘を読み合う。</p>
     <label>あなたの名前<input id="h-name" value="${esc(name)}" maxlength="8" placeholder="8文字まで"></label>
     ${ONLINE_OK?`<div class="opt"><h3>みんなで遊ぶ</h3>
@@ -1179,14 +1216,15 @@ function showHome(){
     <div class="opt"><h3>CPUとひとりで遊ぶ</h3>
       <div class="seg" data-g="n">${[4,5,6].map(n=>`<button data-v="${n}" aria-pressed="${n===5}">${n}人</button>`).join('')}</div>
       <div class="seg" data-g="s"><button data-v="1" aria-pressed="true">ふつう</button><button data-v="0.45" aria-pressed="false">速い</button></div>
+      <div class="small muted">CPUのチャット</div><div class="seg" data-g="bc">${BOTCHAT_OPTS.map(([v,l])=>`<button data-v="${v}" aria-pressed="${v==='on'}">${l}</button>`).join('')}</div>
       <div class="line2"><button data-x="cpu">CPU戦をはじめる</button></div></div>
     <p class="muted small">ラウンド数は人数と同じで、全員が1回ずつ親になる。奇数人数だと詐欺師が1人混ざる。</p>
     <div class="row end"><button data-x="rules">ルールを読む</button></div>`,'home');
   const getName=()=>{const v=w.querySelector('#h-name').value.trim().slice(0,8)||'名無し';store.set('nimai-name',v);return v};
   w.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const seg=b.closest('.seg');
-    if(seg){opt[seg.dataset.g]=+b.dataset.v;seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));return}
+    if(seg){opt[seg.dataset.g]=seg.dataset.g==='bc'?b.dataset.v:+b.dataset.v;seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));return}
     if(b.dataset.x==='rules')showRules();
-    if(b.dataset.x==='cpu'){const nm=getName();closeSheet(w);startCpu({n:opt.n,speed:opt.s,name:nm})}
+    if(b.dataset.x==='cpu'){const nm=getName();closeSheet(w);startCpu({n:opt.n,speed:opt.s,name:nm,botChat:opt.bc})}
     if(b.dataset.x==='create'){const nm=getName();closeSheet(w);connect();socket.emit('hello',{key:myKey,name:nm});socket.emit('create',{n:5})}
     if(b.dataset.x==='join'){const code=w.querySelector('#h-code').value.trim().toUpperCase();if(!code){toast('コードを入れてください');return}
       const nm=getName();closeSheet(w);connect();socket.emit('hello',{key:myKey,name:nm});socket.emit('join',{code})}});

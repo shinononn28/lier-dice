@@ -33,10 +33,10 @@ function tail(k,m,p=1/6){if(k<=0)return 1;if(k>m)return 0;let s=0;for(let i=k;i<
 function createGame(opts){
   const emit=opts.emit,speed=opts.speed||1;
   const T=Object.assign({turn:null,prep:null,matta:null,partner:null,mitsudan:null,accuse:null},opts.timeouts||{});
-  const BONUS_GAP=opts.bonusGap??3,BONUS=opts.bonus??2;
+  const BONUS_GAP=opts.bonusGap??3,BONUS=opts.bonus??2,BOTCHAT=opts.botChat||'on';
   const sleep=ms=>new Promise(r=>setTimeout(r,ms*speed));
   const raw=ms=>new Promise(r=>setTimeout(r,ms));
-  const G={players:[],order:[],rotation:[],rounds:0,mid:0,round:0,bid:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,
+  const G={players:[],order:[],rounds:0,mid:0,round:0,bid:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,
     phase:'start',revealed:false,lastReveal:null,turn:null,mitsudanDone:false,threads:{},pendingTaps:[],cardQueue:[],
     pending:{},ready:new Set(),over:false,result:null,effects:[]};
   let promptSeq=0,paused=0;
@@ -53,7 +53,7 @@ function createGame(opts){
     cards:deck.slice(i*3,i*3+3).map(t=>({type:t,used:false,reserved:false})),ai:{lo:{},susp:{},results:[]},useRounds:[],revealed:[],myLog:[]});
     p.cover=p.team==='rogue'?rnd(['red','blue']):p.team;p.origTeam=p.team;});
   ps.forEach(p=>ps.forEach(q=>{if(q!==p){p.ai.lo[q.id]=0;p.ai.susp[q.id]=0}}));
-  G.players=ps;G.rotation=shuffle([...ps]);G.rounds=n;G.mid=Math.ceil(n/2);
+  G.players=ps;G.parents=new Set();G.rounds=n;G.mid=Math.ceil(n/2);
 
   const byId=id=>G.players.find(p=>p.id===String(id));
   const humans=()=>G.players.filter(p=>!p.isBot);
@@ -69,6 +69,9 @@ function createGame(opts){
   const sys=t=>pub('sys',esc(t));
   const pubPopup=(title,lines,except)=>humans().forEach(h=>{if(h!==except)emit(h.id,'popup',{title,lines})});
   const say=(p,t)=>pub('chat',`<b>${esc(p.name)}</b><span>${esc(t)}</span>`,{from:p.id});
+  // CPUの発言：kind = claim（推理に関わる主張）/ banter（雑談・リアクション）/ reply（返事）
+  const botOK=kind=>BOTCHAT==='on'||(BOTCHAT==='low'&&kind==='claim');
+  const bsay=(p,t,kind)=>{if(!botOK(kind))return false;say(p,t);return true};
   function priv(p,text,isHtml){if(p.isBot)return;
     const label=`${G.round?`ラウンド${G.round}`:'開始時'}${G.phase==='mitsudan'?'・密談':''}`;
     emit(p.id,'log',{kind:'priv',html:`<span class="rd">${label}</span>${isHtml?text:esc(text)}`})}
@@ -195,12 +198,12 @@ function createGame(opts){
     return{ci:pick.i,targets,extra:null};
   }
   function botAnnounce(p,res){
-    if(!res||Math.random()>0.55)return;
+    if(!res||!botOK('claim')||Math.random()>0.55)return;
     const honest=Math.random()<(p.team==='rogue'?0.4:0.8);
     if(res.k==='inv'){const red=honest?res.red:!res.red;say(p,rnd([`${res.t.name}を調べた。${TEAM[red?'red':'blue']}だったぞ`,`調査結果、${res.t.name}は${TEAM[red?'red':'blue']}`]));broadcastClaim(p,{k:'target',t:res.t.id,red})}
     else{const same=honest?res.same:!res.same;say(p,`${res.a.name}と${res.b.name}を照合した。${same?'同じ陣営':'別の陣営'}だった`);broadcastClaim(p,{k:'pair',a:res.a.id,b:res.b.id,same})}
   }
-  function reactCard(user){if(G.mitsudanDone&&Math.random()<0.3){const o=rnd(bots().filter(x=>x!==user));o&&setTimeout(()=>say(o,rnd(['何を使った？','今のは何のカードだ','動いたな','……ほう'])),900*speed)}}
+  function reactCard(user){if(G.mitsudanDone&&Math.random()<0.3){const o=rnd(bots().filter(x=>x!==user));o&&setTimeout(()=>bsay(o,rnd(['何を使った？','今のは何のカードだ','動いたな','……ほう']),'banter'),900*speed)}}
   function botCheat(p,act){
     const ci=p.cards.findIndex(c=>c.type==='cheat'&&!c.used);
     if(ci<0||p.cardsUsed>=2||p.usedThisRound||Math.random()>0.45)return;
@@ -223,7 +226,7 @@ function createGame(opts){
     const results=[...q.filter(x=>ty(x)==='frame'),...shuffle(q.filter(x=>ty(x)!=='frame'&&ty(x)!=='swap')),...q.filter(x=>ty(x)==='swap')]
       .map(x=>[x.p,applyCard(x.p,x.ci,x.targets,x.extra,true)]);
     sync();
-    const bs=bots();if(G.mitsudanDone&&bs.length&&Math.random()<0.4)say(rnd(bs),rnd(['一斉に動いたな','何を仕込んだ？','怪しい手が多いな']));
+    const bs=bots();if(G.mitsudanDone&&bs.length&&Math.random()<0.4)bsay(rnd(bs),rnd(['一斉に動いたな','何を仕込んだ？','怪しい手が多いな']),'banter');
     for(const[p,res]of shuffle(results))if(p.isBot&&res){await sleep(500);botAnnounce(p,res)}
   }
 
@@ -262,14 +265,14 @@ function createGame(opts){
     say(p,t);if(G.over)return;
     const cls=parseClaims(t,p);cls.forEach(c=>broadcastClaim(p,c,1));
     const named=bots().filter(b=>t.includes(b.name));const r=named.length?rnd(named):(Math.random()<0.3?rnd(bots()):null);
-    if(r)setTimeout(()=>say(r,replyTo(r,t,cls,p)),(900+Math.random()*900)*speed);
+    if(r)setTimeout(()=>bsay(r,replyTo(r,t,cls,p),'reply'),(900+Math.random()*900)*speed);
   }
 
   /* ---- round ---- */
   function roundChatter(){
-    if(G.round<2||Math.random()<0.4||!bots().length)return;const p=rnd(bots());
+    if(G.round<2||Math.random()<0.4||!bots().length||!botOK('claim'))return;const p=rnd(bots());
     const t=shuffle(others(p)).sort((a,b)=>Math.abs(p.ai.lo[b.id])-Math.abs(p.ai.lo[a.id]))[0];
-    if(Math.abs(p.ai.lo[t.id])<0.4){say(p,rnd(['まだ誰が誰だか見えないな','そろそろ誰か正体を明かしてくれよ','静かなやつほど怪しいんだよな']));return}
+    if(Math.abs(p.ai.lo[t.id])<0.4){bsay(p,rnd(['まだ誰が誰だか見えないな','そろそろ誰か正体を明かしてくれよ','静かなやつほど怪しいんだよな']),'banter');return}
     let red=p.ai.lo[t.id]>0;if(Math.random()>(p.team==='rogue'?0.4:0.75))red=!red;
     say(p,`${t.name}は${TEAM[red?'red':'blue']}だと睨んでる`);broadcastClaim(p,{k:'target',t:t.id,red},0.7);
   }
@@ -277,7 +280,9 @@ function createGame(opts){
   async function playRound(r){
     Object.assign(G,{round:r,bid:null,revealed:false,lastReveal:null,history:[],maxDecl:[0,0,0,0,0,0,0],mult:1,phase:'prep',turn:null});
     G.players.forEach(p=>{p.dice=roll();p.usedThisRound=false;p.scapegoat=false});
-    const first=G.rotation[(r-1)%G.rotation.length];G.order=[first,...shuffle(G.players.filter(p=>p!==first))];
+    // 手番順を丸ごとシャッフルし、まだ親をやっていない人のうち一番前にいる人を先頭（親）に移す
+    const sh=shuffle([...G.players]);let fi=sh.findIndex(p=>!G.parents.has(p));if(fi<0)fi=0;
+    const first=sh.splice(fi,1)[0];G.order=[first,...sh];G.parents.add(first);
     sys(`ラウンド${r} 開始 ｜ 親は${first.name} ｜ 手番順：${G.order.map(p=>p.name).join(' → ')}`);
     humans().forEach(h=>{const pk=h.peek;if(pk&&r<=pk.until){const t=byId(pk.id);priv(h,`のぞき：${esc(t.name)} の今回のダイス<br>${t.dice.map(d=>dieHTML(d)).join(' ')}`,true)}});
     roundChatter();
@@ -295,8 +300,8 @@ function createGame(opts){
       if(act.type==='bid'){
         G.bid={c:act.c,f:act.f,by:p};G.maxDecl[act.f]=act.c;G.history.push({n:p.name,c:act.c,f:act.f});
         pub('bid',`<b>${esc(p.name)}</b><span>${act.c}個の</span>${dieHTML(act.f)}`);observeBid(p,act.f,next);
-        if(next.isBot&&act.f>=5&&Math.random()<.35)setTimeout(()=>say(next,rnd(['強気だねぇ',`その${act.f}、本当にあるのか？`,'重いのを押し付けてくるな','ほう…'])),400*speed);
-        else if(next.isBot&&act.f<=2&&Math.random()<.15)setTimeout(()=>say(next,rnd(['優しいねぇ','軽いな、助かるよ'])),400*speed);
+        if(next.isBot&&act.f>=5&&Math.random()<.35)setTimeout(()=>bsay(next,rnd(['強気だねぇ',`その${act.f}、本当にあるのか？`,'重いのを押し付けてくるな','ほう…']),'banter'),400*speed);
+        else if(next.isBot&&act.f<=2&&Math.random()<.15)setTimeout(()=>bsay(next,rnd(['優しいねぇ','軽いな、助かるよ']),'banter'),400*speed);
         i++;
       }else{await resolveDoubt(p);break}
     }
@@ -304,7 +309,7 @@ function createGame(opts){
   }
   async function resolveDoubt(ch){
     const b=G.bid.by,{c,f}=G.bid;
-    say(ch,ch.isBot?rnd(['ダウトだ！','それは無いな','嘘だね']):'ダウト！');
+    if(ch.isBot){if(!bsay(ch,rnd(['ダウトだ！','それは無いな','嘘だね']),'banter'))sys(`${ch.name}がダウト！`)}else say(ch,'ダウト！');
     bots().forEach(o=>pairEvidence(o,ch.id,b.id,false,0.2));
     G.phase='reveal';G.turn=null;sync();
     let matta=null;
@@ -336,9 +341,9 @@ function createGame(opts){
     if(bonus){sys(`看破ボーナス！ 宣言が実際より${c-actual}個も多かった。${payer.name}からさらに金貨${bonus}枚を奪取`);
       G.effects.push({round:G.round,text:`看破ボーナス：${ch.name}が${payer.name}から+${bonus}（宣言${c}個／実際${actual}個）`})}
     G.lastReveal={f,c,actual,truth,by:b.name,loser:loser.name,payer:payer.name,amount:amount+bonus};G.revealed=true;sync();
-    if(loser.isBot&&Math.random()<.6)say(loser,rnd(['くっ…','やられた','次は取り返す','読まれてたか']));
-    else if(winner.isBot&&Math.random()<.4)say(winner,rnd(['読み通り','ごちそうさま','悪いね']));
-    if(sg&&payer.isBot)setTimeout(()=>say(payer,rnd(['なんで俺が払うんだ！','身代わりだと…？','覚えてろよ'])),500*speed);
+    if(loser.isBot&&Math.random()<.6)bsay(loser,rnd(['くっ…','やられた','次は取り返す','読まれてたか']),'banter');
+    else if(winner.isBot&&Math.random()<.4)bsay(winner,rnd(['読み通り','ごちそうさま','悪いね']),'banter');
+    if(sg&&payer.isBot)setTimeout(()=>bsay(payer,rnd(['なんで俺が払うんだ！','身代わりだと…？','覚えてろよ']),'banter'),500*speed);
     await sleep(900);
   }
 
